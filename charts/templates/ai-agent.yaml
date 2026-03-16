@@ -1,0 +1,98 @@
+{{- if .Values.assistantx.config.livekit }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assistantx-agent-config
+data:
+  config.yaml: |
+    livekit:
+      url: {{ .Values.assistantx.config.livekit.url | quote }}
+      api_key: {{ .Values.assistantx.config.livekit.apiKey | quote }}
+      api_secret: {{ .Values.assistantx.config.livekit.apiSecret | quote }}
+    voice_mode: {{ .Values.assistantx.config.livekit.voiceMode | default "realtime" | quote }}
+    nova_sonic:
+      model_version: {{ .Values.assistantx.config.livekit.novaSonic.modelVersion | default "nova-sonic-2" | quote }}
+      voice: {{ .Values.assistantx.config.livekit.novaSonic.voice | default "tiffany" | quote }}
+      region: {{ .Values.assistantx.config.livekit.novaSonic.region | default "us-east-1" | quote }}
+      turn_detection: {{ .Values.assistantx.config.livekit.novaSonic.turnDetection | default "MEDIUM" | quote }}
+      realtime_only: {{ .Values.assistantx.config.livekit.novaSonic.realtimeOnly | default true }}
+    agent:
+      name: {{ .Values.assistantx.config.livekit.agentName | default "Assistant" | quote }}
+      instructions: |
+        你是一个智能语音助手。
+        规则：
+        - 用简洁、自然的中文回答问题
+        - 不要使用表情符号、星号、markdown或特殊字符
+        - 保持回答简短、友好、有帮助
+        - 当用户请求控制设备功能时，使用相应的工具执行操作
+    stt:
+      model: "whisper-1"
+      base_url: {{ .Values.assistantx.config.livekit.stt.baseUrl | default "" | quote }}
+      api_key: {{ .Values.assistantx.config.livekit.stt.apiKey | default "not-needed" | quote }}
+      language: "zh"
+    llm:
+      provider: {{ .Values.assistantx.config.livekit.llm.provider | default "bedrock" | quote }}
+      model: {{ .Values.assistantx.config.livekit.llm.model | default "" | quote }}
+      region: {{ .Values.assistantx.config.livekit.llm.region | default "us-west-2" | quote }}
+      {{- if .Values.assistantx.config.livekit.llm.baseUrl }}
+      base_url: {{ .Values.assistantx.config.livekit.llm.baseUrl | quote }}
+      {{- end }}
+      {{- if .Values.assistantx.config.livekit.llm.apiKey }}
+      api_key: {{ .Values.assistantx.config.livekit.llm.apiKey | quote }}
+      {{- end }}
+    tts:
+      model: {{ .Values.assistantx.config.livekit.tts.model | default "" | quote }}
+      voice: {{ .Values.assistantx.config.livekit.tts.voice | default "" | quote }}
+      base_url: {{ .Values.assistantx.config.livekit.tts.baseUrl | default "" | quote }}
+      api_key: {{ .Values.assistantx.config.livekit.tts.apiKey | default "not-needed" | quote }}
+      response_format: "pcm"
+    session:
+      preemptive_generation: true
+      resume_false_interruption: true
+      false_interruption_timeout: 1.0
+    skills:
+      base_path: "skills/devices"
+    {{- if .Values.assistantx.config.livekit.knowledgeBase }}
+    knowledge_base:
+      id: {{ .Values.assistantx.config.livekit.knowledgeBase.id | default "" | quote }}
+      region: {{ .Values.assistantx.config.livekit.knowledgeBase.region | default "us-west-2" | quote }}
+      description: {{ .Values.assistantx.config.livekit.knowledgeBase.description | default "" | quote }}
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistantx-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assistantx-agent
+  template:
+    metadata:
+      labels:
+        app: assistantx-agent
+    spec:
+      {{- if .Values.assistantx.irsaRoleArn }}
+      serviceAccountName: assistantx-backend
+      {{- end }}
+      containers:
+        - name: assistantx-agent
+          image: {{ .Values.assistantx.image.aiAgent }}
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: assistantx-agent-config
+{{- end }}

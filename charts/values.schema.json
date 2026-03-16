@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scaffolding Helm Chart Values",
+  "type": "object",
+  "required": ["global", "assistantx"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "required": ["gateway", "gatewayNamespace"],
+      "properties": {
+        "gateway": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the Envoy Gateway resource"
+        },
+        "gatewayNamespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Namespace where the Gateway lives"
+        }
+      }
+    },
+    "assistantx": {
+      "type": "object",
+      "required": ["host", "config"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "backendLang": {
+          "type": "string",
+          "enum": ["go", "python"],
+          "description": "Backend implementation to deploy: 'go' uses image.backend, 'python' uses image.aiAgent"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Full image reference for the Go backend container, e.g. public.ecr.aws/b1y9i2f3/cnf:backend"
+            },
+            "aiAgent": {
+              "type": "string",
+              "description": "Full image reference for the Python backend container, e.g. public.ecr.aws/b1y9i2f3/cnf:backend-py"
+            },
+            "frontend": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Full image reference for the frontend container, e.g. public.ecr.aws/b1y9i2f3/cnf:frontend"
+            }
+          }
+        },
+        "host": {
+          "type": "object",
+          "required": ["frontend"],
+          "properties": {
+            "frontend": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Hostname for the frontend (and backend when host.backend is empty)"
+            },
+            "backend": {
+              "type": "string",
+              "description": "Optional separate hostname for backend RPCs. Leave empty to share host.frontend."
+            }
+          }
+        },
+        "config": {
+          "type": "object",
+          "required": ["auth"],
+          "properties": {
+            "auth": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^oidc://",
+              "description": "OIDC connection string: oidc://CLIENT_ID:CLIENT_SECRET@ISSUER?scope=..."
+            }
+          }
+        },
+        "irsaRoleArn": {
+          "type": "string",
+          "description": "IAM Role ARN for IRSA. When set, creates a ServiceAccount with eks.amazonaws.com/role-arn annotation.",
+          "pattern": "^$|^arn:aws:iam::[0-9]{12}:role/.+"
+        }
+      }
+    }
+  }
+}

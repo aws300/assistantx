@@ -1,0 +1,310 @@
+# ============================================
+# EV Charger Control Skills
+# 电动汽车充电桩语音控制技能配置
+# ============================================
+
+metadata:
+  device_type: ev_charger
+  device_name: "智能充电桩"
+  version: "1.0.0"
+  language: zh-CN
+  description: "电动汽车充电桩语音控制系统技能配置"
+  author: "Assistant Team"
+
+# Global settings
+settings:
+  session_timeout_minutes: 5
+  wake_word: "hey_jarvis"
+  confirmation_required: false
+
+# Skill categories
+categories:
+  - id: charging
+    name: "充电控制"
+    icon: "zap"
+    description: "充电启停、暂停恢复控制"
+    
+  - id: settings
+    name: "充电设置"
+    icon: "settings"
+    description: "目标电量、充电功率设置"
+    
+  - id: query
+    name: "状态查询"
+    icon: "info"
+    description: "充电状态、电量、费用查询"
+
+# ============================================
+# Skill Definitions
+# ============================================
+skills:
+  # ==========================================
+  # Charging Control Skills (充电控制)
+  # ==========================================
+  - id: charging.start
+    category: charging
+    name: "开始充电"
+    description: "启动充电"
+    
+    triggers:
+      - "开始充电"
+      - "启动充电"
+      - "充电"
+      - "开充"
+      
+    parameters: []
+    
+    action:
+      id: "charger.start"
+      payload_template: {}
+        
+    responses:
+      success: "好的，充电已启动"
+      error: "抱歉，启动充电失败，请检查连接状态"
+
+  - id: charging.stop
+    category: charging
+    name: "停止充电"
+    description: "停止充电"
+    
+    triggers:
+      - "停止充电"
+      - "结束充电"
+      - "停充"
+      
+    parameters: []
+    
+    action:
+      id: "charger.stop"
+      payload_template: {}
+        
+    responses:
+      success: "好的，充电已停止"
+
+  - id: charging.pause
+    category: charging
+    name: "暂停充电"
+    description: "暂停当前充电"
+    
+    triggers:
+      - "暂停充电"
+      - "暂停一下"
+      
+    parameters: []
+    
+    action:
+      id: "charger.pause"
+      payload_template: {}
+        
+    responses:
+      success: "好的，充电已暂停"
+
+  - id: charging.resume
+    category: charging
+    name: "恢复充电"
+    description: "恢复暂停的充电"
+    
+    triggers:
+      - "恢复充电"
+      - "继续充电"
+      
+    parameters: []
+    
+    action:
+      id: "charger.resume"
+      payload_template: {}
+        
+    responses:
+      success: "好的，充电已恢复"
+
+  # ==========================================
+  # Settings Skills (充电设置)
+  # ==========================================
+  - id: settings.set_target_soc
+    category: settings
+    name: "设置目标电量"
+    description: "设置充电目标电量百分比"
+    
+    triggers:
+      - "充到{percent}%"
+      - "充到{percent}"
+      - "目标电量{percent}"
+      - "充电到{percent}%"
+      - "充到百分之{percent}"
+      
+    parameters:
+      - name: percent
+        type: number
+        required: true
+        min: 20
+        max: 100
+        unit: "%"
+        description: "目标电量百分比（20-100%）"
+    
+    action:
+      id: "charger.setTargetSoc"
+      payload_template:
+        percent: "${percent}"
+        
+    responses:
+      success: "好的，目标电量已设置为${percent}%"
+      error: "抱歉，设置失败，请重试"
+
+  # ==========================================
+  # Query Skills (状态查询)
+  # ==========================================
+  - id: query.get_status
+    category: query
+    name: "查询充电状态"
+    description: "获取当前充电状态概览"
+    
+    triggers:
+      - "充电状态"
+      - "充了多少"
+      - "电量多少"
+      - "充电情况"
+      - "还要充多久"
+      
+    parameters: []
+    
+    action:
+      id: "charger.getStatus"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        status:
+          type: string
+          description: "充电状态"
+        soc:
+          type: number
+          description: "当前电量"
+        targetSoc:
+          type: number
+          description: "目标电量"
+        power:
+          type: number
+          description: "当前功率"
+        estimatedTime:
+          type: number
+          description: "预计剩余时间"
+        totalEnergy:
+          type: number
+          description: "已充电量"
+        currentCost:
+          type: number
+          description: "当前费用"
+        
+    responses:
+      success: "当前${status}，电量${soc}%，目标${targetSoc}%，功率${power}kW，预计还需${estimatedTime}分钟"
+
+  - id: query.get_electrical
+    category: query
+    name: "查询电气数据"
+    description: "获取详细电气参数"
+    
+    triggers:
+      - "电压多少"
+      - "电流多少"
+      - "功率多少"
+      - "充电功率"
+      
+    parameters: []
+    
+    action:
+      id: "charger.getElectricalData"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        inputVoltage:
+          type: number
+          description: "输入电压"
+        inputCurrent:
+          type: number
+          description: "输入电流"
+        outputVoltage:
+          type: number
+          description: "输出电压"
+        outputCurrent:
+          type: number
+          description: "输出电流"
+        power:
+          type: number
+          description: "实时功率"
+        totalEnergy:
+          type: number
+          description: "累计电量"
+        
+    responses:
+      success: "输入电压${inputVoltage}V，输出电压${outputVoltage}V，输出电流${outputCurrent}A，功率${power}kW"
+
+  - id: query.get_temperature
+    category: query
+    name: "查询温度"
+    description: "获取充电桩温度状态"
+    
+    triggers:
+      - "温度多少"
+      - "充电桩温度"
+      - "枪头温度"
+      
+    parameters: []
+    
+    action:
+      id: "charger.getTemperature"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        connector:
+          type: number
+          description: "枪头温度"
+        module:
+          type: number
+          description: "模块温度"
+        ambient:
+          type: number
+          description: "环境温度"
+        
+    responses:
+      success: "枪头温度${connector}度，模块温度${module}度，环境温度${ambient}度"
+
+  - id: query.get_billing
+    category: query
+    name: "查询费用"
+    description: "获取充电费用信息"
+    
+    triggers:
+      - "花了多少钱"
+      - "充电费用"
+      - "多少钱"
+      - "电费多少"
+      
+    parameters: []
+    
+    action:
+      id: "charger.getBilling"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        rate:
+          type: number
+          description: "电价"
+        currentCost:
+          type: number
+          description: "当前费用"
+        duration:
+          type: number
+          description: "充电时长"
+        totalEnergy:
+          type: number
+          description: "已充电量"
+        
+    responses:
+      success: "当前电价${rate}元/度，已充${totalEnergy}度，费用${currentCost}元，充电${duration}分钟"

@@ -1,0 +1,90 @@
+{{- $backendLang := .Values.assistantx.backendLang | default "go" }}
+{{- $backendImage := .Values.assistantx.image.backend }}
+{{- if and (eq $backendLang "python") .Values.assistantx.image.aiAgent }}
+{{- $backendImage = .Values.assistantx.image.aiAgent }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assistantx-backend-config
+data:
+  config.yaml: |
+    dependencies:
+      auth: {{ .Values.assistantx.config.auth | quote }}
+    {{- if .Values.assistantx.config.livekit }}
+    livekit:
+      url: {{ .Values.assistantx.config.livekit.url | default "" | quote }}
+      apiKey: {{ .Values.assistantx.config.livekit.apiKey | default "" | quote }}
+      apiSecret: {{ .Values.assistantx.config.livekit.apiSecret | default "" | quote }}
+      agentName: {{ .Values.assistantx.config.livekit.agentName | default "Assistant" | quote }}
+      skillsDir: "/app/skills/devices"
+    {{- end }}
+    apis:
+      httpAddr: ":8080"
+      grpcAddr: ":8081"
+      metricsAddr: ":9090"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: assistantx-backend
+spec:
+  selector:
+    app: assistantx-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistantx-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assistantx-backend
+  template:
+    metadata:
+      labels:
+        app: assistantx-backend
+    spec:
+      {{- if .Values.assistantx.irsaRoleArn }}
+      serviceAccountName: assistantx-backend
+      {{- end }}
+      containers:
+        - name: assistantx-backend
+          image: {{ $backendImage }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: assistantx-backend-config

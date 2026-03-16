@@ -1,0 +1,45 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "STSCallerIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMRoleRead",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::__ACCOUNT_ID__:role/__ROLE_NAME__"
+    },
+    {
+      "Sid": "BedrockFullAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockRuntimeFullAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-runtime:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockAgentRuntimeFullAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agent-runtime:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

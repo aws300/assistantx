@@ -1,0 +1,26 @@
+version: v2
+
+# Python protobuf + gRPC stub generation for backend-py.
+# Uses buf BSR remote plugins (requires internet access on first run).
+#
+# Usage:
+#   cd protos && make gen-python
+#
+# Output: ../ai-agent/src/authspa/generated/{auth,irsa}/v1/
+#
+# The generated files are imported via import bridges:
+#   src/auth/v1/__init__.py  → authspa/generated/auth/v1/
+#   src/irsa/v1/__init__.py  → authspa/generated/irsa/v1/
+
+plugins:
+  # Python: protobuf message types (_pb2.py)
+  - plugin: buf.build/protocolbuffers/python
+    out: ../ai-agent/src/authspa/generated
+    opt:
+      - paths=source_relative
+
+  # Python: gRPC service stubs (_pb2_grpc.py)
+  - plugin: buf.build/grpc/python
+    out: ../ai-agent/src/authspa/generated
+    opt:
+      - paths=source_relative

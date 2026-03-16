@@ -1,0 +1,45 @@
+/**
+ * Runtime configuration injected by the container entrypoint into index.html
+ * as window.__CONFIG__ = { backendUrl: "...", connectProtocol: "..." }.
+ *
+ * backendUrl rules:
+ *  - Set (e.g. "https://authapis.nx.run") → absolute URL for cross-origin calls.
+ *  - Empty / missing / placeholder → "" → fetch uses relative paths (same-origin).
+ *
+ * connectProtocol rules:
+ *  - "proto" (default) → Content-Type: application/proto  (binary protobuf)
+ *  - "json"            → Content-Type: application/json   (Connect JSON)
+ *  - Missing / placeholder → falls back to "proto".
+ */
+
+function resolveBackendUrl(): string {
+  const raw: unknown = (window as any).__CONFIG__?.backendUrl;
+  if (
+    typeof raw !== 'string' ||
+    raw === '' ||
+    raw.startsWith('__') // catches "__BACKEND_URL_PLACEHOLDER__"
+  ) {
+    return '';
+  }
+  return raw;
+}
+
+function resolveConnectProtocol(): 'proto' | 'json' {
+  const raw: unknown = (window as any).__CONFIG__?.connectProtocol;
+  if (typeof raw === 'string' && !raw.startsWith('__') && raw === 'json') {
+    return 'json';
+  }
+  return 'proto'; // default
+}
+
+/** Base URL for all backend API calls.
+ *  Empty string → relative path (same-origin / nginx proxy).
+ *  Non-empty   → absolute URL, e.g. "https://authapis.nx.run".
+ */
+export const BACKEND_URL: string = resolveBackendUrl();
+
+/** ConnectRPC wire format.
+ *  "proto" → application/proto (binary, default).
+ *  "json"  → application/json.
+ */
+export const CONNECT_PROTOCOL: 'proto' | 'json' = resolveConnectProtocol();

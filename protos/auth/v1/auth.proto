@@ -1,0 +1,64 @@
+syntax = "proto3";
+package auth.v1;
+option go_package = "github.com/scaffolding/backend/pkg/pb/auth/v1;authv1";
+
+service AuthService {
+  // GetUserInfo validates the Authorization Bearer token and returns user claims.
+  // Returns UNAUTHENTICATED (code 16) if token is invalid or expired.
+  rpc GetUserInfo(GetUserInfoRequest) returns (UserInfo);
+
+  // Authorize returns an OIDC authorization URL for PKCE flow.
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+
+  // Token exchanges an authorization code for tokens, or refreshes an existing token.
+  rpc Token(TokenRequest) returns (TokenResponse);
+
+  // Logout returns an OIDC end_session_endpoint URL for the client to redirect to.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+message GetUserInfoRequest {}
+
+message UserInfo {
+  string sub = 1;
+  string name = 2;
+  string email = 3;
+  string picture = 4;
+  string project_id = 5;
+}
+
+message AuthorizeRequest {
+  string redirect_uri = 1;
+  string code_challenge = 2;
+  string state = 3;
+}
+
+message AuthorizeResponse {
+  string authorize_url = 1;
+}
+
+message TokenRequest {
+  string grant_type = 1;    // "authorization_code" or "refresh_token"
+  string code = 2;           // for authorization_code
+  string redirect_uri = 3;   // for authorization_code
+  string code_verifier = 4;  // PKCE verifier for authorization_code
+  string refresh_token = 5;  // for refresh_token
+}
+
+message TokenResponse {
+  string token_type = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  int32 expires_in = 4;
+  string id_token = 5;
+  string sub = 6;
+}
+
+message LogoutRequest {
+  string redirect_uri = 1;   // post-logout redirect URI
+  string id_token_hint = 2;  // optional ID token hint
+}
+
+message LogoutResponse {
+  string logout_url = 1;     // OIDC end_session_endpoint URL to redirect to
+}

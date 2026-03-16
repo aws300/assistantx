@@ -1,0 +1,78 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: assistantx-frontend
+spec:
+  parentRefs:
+    - name: {{ $.Values.global.gateway }}
+      namespace: {{ $.Values.global.gatewayNamespace }}
+  hostnames:
+    - {{ $.Values.assistantx.host.frontend | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: assistantx-frontend
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: assistantx-frontend-catchall
+spec:
+  parentRefs:
+    - name: {{ $.Values.global.gateway }}
+      namespace: {{ $.Values.global.gatewayNamespace }}
+      port: 80
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: assistantx-frontend
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: assistantx-backend
+spec:
+  parentRefs:
+    - name: {{ $.Values.global.gateway }}
+      namespace: {{ $.Values.global.gatewayNamespace }}
+  hostnames:
+    - {{ if $.Values.assistantx.host.backend }}{{ $.Values.assistantx.host.backend | quote }}{{ else }}{{ $.Values.assistantx.host.frontend | quote }}{{ end }}
+  rules:
+    - matches:
+        - path:
+            {{- if $.Values.assistantx.host.backend }}
+            type: PathPrefix
+            value: /
+            {{- else }}
+            type: RegularExpression
+            value: "^/[a-z]+\\.v[0-9]+[a-z]*\\..+"
+            {{- end }}
+      backendRefs:
+        - name: assistantx-backend
+          port: 8080
+---
+# BackendTrafficPolicy: h2c + streaming-friendly timeouts for ConnectRPC.
+# NOTE: No healthCheck block — breaks mixed gRPC+HTTP routing.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: assistantx-streaming-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: assistantx-backend
+  connection:
+    bufferLimit: 32768
+  timeout:
+    http:
+      requestTimeout: 0s
+      connectionIdleTimeout: 3600s

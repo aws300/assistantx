@@ -1,0 +1,40 @@
+syntax = "proto3";
+package livekit.v1;
+option go_package = "github.com/assistantx/backend/pkg/pb/livekit/v1;livekitv1";
+
+import "google/protobuf/struct.proto";
+
+service LivekitService {
+  // GetToken generates a LiveKit access token and dispatches an agent to the room.
+  rpc GetToken(GetTokenRequest) returns (GetTokenResponse);
+
+  // GetSkills returns the default device skills configuration.
+  rpc GetSkills(GetSkillsRequest) returns (GetSkillsResponse);
+
+  // GetDeviceSkills returns skills for a specific device type.
+  rpc GetDeviceSkills(GetDeviceSkillsRequest) returns (GetSkillsResponse);
+}
+
+message GetTokenRequest {
+  string room_name = 1;
+  string scene = 2; // Scene type: "car", "home", "charger"
+}
+
+message GetTokenResponse {
+  string server_url = 1;
+  string participant_token = 2;
+  string token = 3; // Alias for compatibility
+  string room_name = 4;
+  string identity = 5;
+  string name = 6;
+}
+
+message GetSkillsRequest {}
+
+message GetDeviceSkillsRequest {
+  string device = 1;
+}
+
+message GetSkillsResponse {
+  google.protobuf.Struct data = 1;
+}

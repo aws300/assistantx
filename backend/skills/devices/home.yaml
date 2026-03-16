@@ -1,0 +1,536 @@
+# ============================================
+# Smart Home Control Skills
+# 智能家居语音控制技能配置
+# ============================================
+
+metadata:
+  device_type: smart_home
+  device_name: "智能家居"
+  version: "1.0.0"
+  language: zh-CN
+  description: "智能家居语音控制系统技能配置"
+  author: "Assistant Team"
+
+# Global settings
+settings:
+  session_timeout_minutes: 5
+  wake_word: "hey_jarvis"
+  confirmation_required: false
+
+# Skill categories
+categories:
+  - id: hvac
+    name: "空调控制"
+    icon: "thermometer"
+    description: "温度、风速、空调模式控制"
+    
+  - id: lighting
+    name: "灯光控制"
+    icon: "lightbulb"
+    description: "房间灯光开关、亮度调节"
+    
+  - id: curtain
+    name: "窗帘控制"
+    icon: "blinds"
+    description: "窗帘开关、位置调节"
+    
+  - id: info
+    name: "信息查询"
+    icon: "info"
+    description: "室内外温度、天气信息查询"
+
+# ============================================
+# Skill Definitions
+# ============================================
+skills:
+  # ==========================================
+  # HVAC Skills (空调控制)
+  # ==========================================
+  - id: hvac.set_temperature
+    category: hvac
+    name: "设置温度"
+    description: "设置空调目标温度"
+    
+    triggers:
+      - "把温度调到{temperature}度"
+      - "设置温度{temperature}"
+      - "空调{temperature}度"
+      - "调到{temperature}度"
+      
+    parameters:
+      - name: temperature
+        type: number
+        required: true
+        min: 16
+        max: 30
+        unit: "°C"
+        description: "目标温度（16-30°C）"
+    
+    action:
+      id: "hvac.setTemperature"
+      payload_template:
+        temperature: "${temperature}"
+        
+    responses:
+      success: "好的，已将温度设置为${temperature}度"
+      error: "抱歉，温度设置失败，请重试"
+
+  - id: hvac.toggle_power
+    category: hvac
+    name: "空调开关"
+    description: "打开或关闭空调"
+    
+    triggers:
+      - "打开空调"
+      - "关闭空调"
+      - "开空调"
+      - "关空调"
+      
+    parameters:
+      - name: action
+        type: enum
+        required: true
+        options:
+          - value: "on"
+            aliases: ["打开", "开"]
+          - value: "off"
+            aliases: ["关闭", "关"]
+        description: "开关动作"
+    
+    action:
+      id: "hvac.setPower"
+      payload_template:
+        action: "${action}"
+        
+    responses:
+      success: "好的，空调已${action}"
+
+  - id: hvac.set_mode
+    category: hvac
+    name: "空调模式"
+    description: "设置空调工作模式"
+    
+    triggers:
+      - "空调调成{mode}模式"
+      - "开{mode}模式"
+      - "切换到{mode}"
+      
+    parameters:
+      - name: mode
+        type: enum
+        required: true
+        options:
+          - value: "cool"
+            aliases: ["制冷", "冷风"]
+          - value: "heat"
+            aliases: ["制热", "暖风"]
+          - value: "auto"
+            aliases: ["自动"]
+          - value: "dry"
+            aliases: ["除湿"]
+          - value: "fan"
+            aliases: ["送风", "通风"]
+        description: "空调模式"
+    
+    action:
+      id: "hvac.setMode"
+      payload_template:
+        mode: "${mode}"
+        
+    responses:
+      success: "好的，已切换到${mode}模式"
+
+  - id: hvac.set_fan_speed
+    category: hvac
+    name: "设置风速"
+    description: "设置空调风扇速度"
+    
+    triggers:
+      - "风速调到{speed}"
+      - "风量{speed}"
+      - "风大一点"
+      - "风小一点"
+      
+    parameters:
+      - name: speed
+        type: enum
+        required: true
+        options:
+          - value: "auto"
+            aliases: ["自动"]
+          - value: "low"
+            aliases: ["低", "小", "一档"]
+          - value: "medium"
+            aliases: ["中", "中等", "二档"]
+          - value: "high"
+            aliases: ["高", "大", "三档"]
+        description: "风速档位"
+    
+    action:
+      id: "hvac.setFanSpeed"
+      payload_template:
+        speed: "${speed}"
+        
+    responses:
+      success: "好的，风速已设置为${speed}"
+
+  - id: hvac.get_temperature
+    category: hvac
+    name: "查询温度"
+    description: "获取当前室内外温度信息"
+    
+    triggers:
+      - "现在温度多少"
+      - "室内温度"
+      - "房间温度"
+      - "温度是多少"
+      
+    parameters: []
+    
+    action:
+      id: "hvac.getTemperature"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        inside:
+          type: number
+          description: "室内温度"
+        outside:
+          type: number
+          description: "室外温度"
+        target:
+          type: number
+          description: "目标温度"
+        
+    responses:
+      success: "当前室内温度是${inside}度，室外温度${outside}度，目标温度${target}度"
+
+  - id: hvac.get_status
+    category: hvac
+    name: "查询空调状态"
+    description: "获取空调当前状态"
+    
+    triggers:
+      - "空调状态"
+      - "空调开着吗"
+      - "空调是什么模式"
+      
+    parameters: []
+    
+    action:
+      id: "hvac.getStatus"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        power:
+          type: boolean
+          description: "电源状态"
+        temperature:
+          type: number
+          description: "目标温度"
+        mode:
+          type: string
+          description: "工作模式"
+        fanSpeed:
+          type: string
+          description: "风速"
+        
+    responses:
+      success: "空调${power}，目标温度${temperature}度，${mode}模式，风速${fanSpeed}"
+
+  # ==========================================
+  # Lighting Skills (灯光控制)
+  # ==========================================
+  - id: lighting.control
+    category: lighting
+    name: "灯光开关"
+    description: "控制房间灯光开关"
+    
+    triggers:
+      - "打开{room}的灯"
+      - "关闭{room}的灯"
+      - "开灯"
+      - "关灯"
+      - "把{room}灯打开"
+      - "把{room}灯关掉"
+      
+    parameters:
+      - name: room
+        type: enum
+        required: false
+        default: "livingRoom"
+        options:
+          - value: "livingRoom"
+            aliases: ["客厅", "大厅"]
+          - value: "bedroom"
+            aliases: ["卧室", "房间"]
+          - value: "kitchen"
+            aliases: ["厨房"]
+          - value: "bathroom"
+            aliases: ["卫生间", "洗手间", "厕所"]
+          - value: "all"
+            aliases: ["所有", "全部", "全屋"]
+        description: "房间"
+        
+      - name: action
+        type: enum
+        required: true
+        options:
+          - value: "on"
+            aliases: ["打开", "开"]
+          - value: "off"
+            aliases: ["关闭", "关", "关掉"]
+        description: "开关动作"
+    
+    action:
+      id: "lighting.control"
+      payload_template:
+        room: "${room}"
+        action: "${action}"
+        
+    responses:
+      success: "好的，${room}的灯已${action}"
+
+  - id: lighting.set_brightness
+    category: lighting
+    name: "调节亮度"
+    description: "调节灯光亮度"
+    
+    triggers:
+      - "把{room}灯调亮"
+      - "把{room}灯调暗"
+      - "{room}灯亮度调到{brightness}"
+      - "亮一点"
+      - "暗一点"
+      
+    parameters:
+      - name: room
+        type: enum
+        required: false
+        default: "livingRoom"
+        options:
+          - value: "livingRoom"
+            aliases: ["客厅"]
+          - value: "bedroom"
+            aliases: ["卧室"]
+          - value: "kitchen"
+            aliases: ["厨房"]
+          - value: "bathroom"
+            aliases: ["卫生间"]
+        description: "房间"
+        
+      - name: brightness
+        type: number
+        required: false
+        min: 0
+        max: 100
+        default: 80
+        unit: "%"
+        description: "亮度百分比"
+    
+    action:
+      id: "lighting.setBrightness"
+      payload_template:
+        room: "${room}"
+        brightness: "${brightness}"
+        
+    responses:
+      success: "好的，${room}灯光亮度已调节"
+
+  - id: lighting.get_status
+    category: lighting
+    name: "查询灯光状态"
+    description: "获取各房间灯光状态"
+    
+    triggers:
+      - "灯开着吗"
+      - "哪些灯开着"
+      - "灯光状态"
+      
+    parameters: []
+    
+    action:
+      id: "lighting.getStatus"
+      payload_template: {}
+      
+    responses:
+      success: "已获取灯光状态"
+
+  # ==========================================
+  # Curtain Skills (窗帘控制)
+  # ==========================================
+  - id: curtain.control
+    category: curtain
+    name: "窗帘控制"
+    description: "控制窗帘开关"
+    
+    triggers:
+      - "打开窗帘"
+      - "关闭窗帘"
+      - "拉开窗帘"
+      - "拉上窗帘"
+      - "窗帘开到{position}"
+      
+    parameters:
+      - name: action
+        type: enum
+        required: true
+        options:
+          - value: "open"
+            aliases: ["打开", "拉开", "开"]
+          - value: "close"
+            aliases: ["关闭", "拉上", "关"]
+          - value: "set"
+            aliases: ["设置", "调到"]
+        description: "操作类型"
+        
+      - name: position
+        type: number
+        required: false
+        min: 0
+        max: 100
+        unit: "%"
+        description: "窗帘位置（0=全关，100=全开）"
+    
+    action:
+      id: "curtain.control"
+      payload_template:
+        action: "${action}"
+        position: "${position}"
+        
+    responses:
+      success: "好的，窗帘已${action}"
+
+  - id: curtain.set_position
+    category: curtain
+    name: "设置窗帘位置"
+    description: "设置窗帘开合位置"
+    
+    triggers:
+      - "窗帘开到{position}%"
+      - "窗帘调到{position}"
+      
+    parameters:
+      - name: position
+        type: number
+        required: true
+        min: 0
+        max: 100
+        unit: "%"
+        description: "窗帘位置百分比"
+    
+    action:
+      id: "curtain.setPosition"
+      payload_template:
+        position: "${position}"
+        
+    responses:
+      success: "好的，窗帘已调到${position}%"
+
+  - id: curtain.get_status
+    category: curtain
+    name: "查询窗帘状态"
+    description: "获取窗帘当前状态"
+    
+    triggers:
+      - "窗帘开着吗"
+      - "窗帘状态"
+      
+    parameters: []
+    
+    action:
+      id: "curtain.getStatus"
+      payload_template: {}
+      
+    responses:
+      success: "已获取窗帘状态"
+
+  # ==========================================
+  # Info Skills (信息查询)
+  # ==========================================
+  - id: info.get_temperature
+    category: info
+    name: "温度查询"
+    description: "查询室内外温度"
+    
+    triggers:
+      - "现在多少度"
+      - "室外温度多少"
+      - "外面多少度"
+      
+    parameters: []
+    
+    action:
+      id: "info.getTemperature"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        inside:
+          type: number
+          description: "室内温度"
+        outside:
+          type: number
+          description: "室外温度"
+        
+    responses:
+      success: "室内温度${inside}度，室外温度${outside}度"
+
+  - id: info.get_weather
+    category: info
+    name: "天气查询"
+    description: "查询当前天气状况"
+    
+    triggers:
+      - "今天天气怎么样"
+      - "外面天气"
+      - "天气如何"
+      
+    parameters: []
+    
+    action:
+      id: "info.getWeather"
+      payload_template: {}
+      
+    returns:
+      type: object
+      properties:
+        weather:
+          type: string
+          description: "天气状况"
+        outside:
+          type: number
+          description: "室外温度"
+        humidity:
+          type: number
+          description: "湿度"
+        pm25:
+          type: number
+          description: "PM2.5"
+        
+    responses:
+      success: "今天天气${weather}，室外温度${outside}度，湿度${humidity}%，PM2.5是${pm25}"
+
+  - id: info.get_home_status
+    category: info
+    name: "家居状态"
+    description: "查询智能家居整体状态"
+    
+    triggers:
+      - "家里状态"
+      - "家居状态"
+      - "家里怎么样"
+      
+    parameters: []
+    
+    action:
+      id: "info.getHomeStatus"
+      payload_template: {}
+      
+    responses:
+      success: "已获取家居状态"

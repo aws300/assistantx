@@ -1,0 +1,69 @@
+# Assistant Agent Configuration
+
+livekit:
+  url: "wss://livekit.nx.run"
+  api_key: "REDACTED-LIVEKIT-API-KEY"
+  api_secret: "REDACTED-LIVEKIT-API-SECRET"
+
+# Voice mode: "realtime" (Nova Sonic) or "traditional" (STT+LLM+TTS)
+voice_mode: "realtime"
+
+# Nova Sonic configuration (only used when voice_mode is "realtime")
+nova_sonic:
+  model_version: "nova-sonic-2"
+  voice: "tiffany"
+  region: "us-east-1"
+  turn_detection: "MEDIUM"
+  realtime_only: true
+
+agent:
+  name: "AssistantX"
+  instructions: |
+    你是一个智能语音助手。
+
+    规则：
+    - 用简洁、自然的中文回答问题
+    - 不要使用表情符号、星号、markdown或特殊字符
+    - 保持回答简短、友好、有帮助
+    - 当用户请求控制设备功能时，使用相应的工具执行操作
+
+stt:
+  model: "whisper-1"
+  base_url: "http://devgpu.nx.run:8000/v1"
+  api_key: "not-needed"
+  language: "zh"
+
+# LLM configuration
+# provider: "bedrock" (direct AWS Bedrock via IRSA) or "litellm_proxy" (via LiteLLM server)
+#
+# bedrock mode:   Uses boto3/litellm locally, authenticates via IRSA credentials.
+#                 No base_url needed. Model must use bedrock/ prefix.
+#
+# litellm_proxy:  Routes through an external LiteLLM proxy server.
+#                 Requires base_url and api_key.
+llm:
+  provider: "litellm_proxy"
+  model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  region: "us-west-2"
+  base_url: "http://litellm.aws300.svc.cluster.local:8080/v1"
+  api_key: "REDACTED-LITELLM-API-KEY"
+
+tts:
+  model: "cosyvoice-v3"
+  voice: "中文女"
+  base_url: "http://devgpu.nx.run:9880/v1"
+  api_key: "not-needed"
+  response_format: "pcm"
+
+session:
+  preemptive_generation: true
+  resume_false_interruption: true
+  false_interruption_timeout: 1.0
+
+skills:
+  base_path: "skills/devices"
+
+knowledge_base:
+  id: "FHRCYNULOS"
+  region: "us-west-2"
+  description: "充电桩相关问题，包括充电桩使用方法、操作指南、充电费用、计费方式、故障排除、常见问题、充电安全注意事项、充电桩技术规格等"

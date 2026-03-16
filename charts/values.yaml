@@ -1,0 +1,54 @@
+global:
+  gateway: eg
+  gatewayNamespace: aws300
+
+assistantx:
+  enabled: true
+  # backendLang: "go" uses image.backend; "python" uses image.aiAgent
+  backendLang: go
+  image:
+    backend: public.ecr.aws/b1y9i2f3/assistantx:backend
+    aiAgent: public.ecr.aws/b1y9i2f3/assistantx:ai-agent
+    frontend: public.ecr.aws/b1y9i2f3/assistantx:frontend
+  host:
+    frontend: assistantx.nx.run
+    # backend: when set, backend RPCs are served on this hostname (separate domain).
+    # Leave empty to share host.frontend via path-based routing.
+    backend: "assistantxapi.nx.run"
+  config:
+    auth: "oidc://u5HewIf9_gccM3O5Q-nwAA:@account.nx.run?scope=offline%20profile%20%20email%20%20openid"
+    livekit:
+      url: "wss://livekit.nx.run"
+      apiKey: "REDACTED-LIVEKIT-API-KEY"
+      apiSecret: "REDACTED-LIVEKIT-API-SECRET"
+      agentName: "Assistant"
+      voiceMode: "realtime"
+      novaSonic:
+        modelVersion: "nova-sonic-2"
+        voice: "tiffany"
+        region: "us-east-1"
+        turnDetection: "MEDIUM"
+        realtimeOnly: true
+      stt:
+        baseUrl: "http://devgpu.nx.run:8000/v1"
+        apiKey: "not-needed"
+      llm:
+        # provider: "bedrock" (direct via IRSA) or "litellm_proxy" (via LiteLLM server)
+        provider: "litellm_proxy"
+        model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        region: "us-west-2"
+        baseUrl: "http://litellm.aws300.svc.cluster.local:8080/v1"
+        apiKey: "REDACTED-LITELLM-API-KEY"
+      tts:
+        model: "cosyvoice-v3"
+        voice: "中文女"
+        baseUrl: "http://devgpu.nx.run:9880/v1"
+        apiKey: "not-needed"
+      knowledgeBase:
+        id: "FHRCYNULOS"
+        region: "us-west-2"
+        description: "充电桩相关问题，包括充电桩使用方法、操作指南、充电费用、计费方式、故障排除、常见问题、充电安全注意事项、充电桩技术规格等"
+  # irsaRoleArn: when set, creates a ServiceAccount annotated with eks.amazonaws.com/role-arn
+  # and binds it to the backend Deployment for IRSA credential injection.
+  irsaRoleArn: "arn:aws:iam::867344450900:role/NxlabsEKS_JumpRole"
+

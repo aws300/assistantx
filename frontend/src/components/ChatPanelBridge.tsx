@@ -1,0 +1,62 @@
+/**
+ * ChatPanelBridge: SolidJS wrapper that mounts the React-based LiveKit Chat Panel.
+ *
+ * This bridges the SolidJS page with the React micro-island that uses
+ * official @livekit/components-react hooks for proper turn-taking and
+ * text interruption.
+ */
+
+import { Component, onMount, onCleanup, createEffect, splitProps } from 'solid-js';
+import { mountLivekitChat, type ChatHandle, type SceneType } from '@/react/LivekitChat';
+
+interface ChatPanelBridgeProps {
+  scene: SceneType;
+  /** Reactive trigger: when flipped to true, auto-connect */
+  autoStart?: () => boolean;
+  /** Called when voice session starts */
+  onSessionStart?: () => void;
+  /** Called when voice session ends */
+  onSessionEnd?: () => void;
+}
+
+const ChatPanelBridge: Component<ChatPanelBridgeProps> = (rawProps) => {
+  const [props] = splitProps(rawProps, ['scene', 'autoStart', 'onSessionStart', 'onSessionEnd']);
+
+  let container: HTMLDivElement | undefined;
+  let handle: ChatHandle | null = null;
+
+  onMount(() => {
+    if (!container) return;
+
+    handle = mountLivekitChat(container, {
+      scene: props.scene,
+      onSessionStart: () => props.onSessionStart?.(),
+      onSessionEnd: () => props.onSessionEnd?.(),
+    });
+  });
+
+  // Watch autoStart trigger from wake word
+  createEffect(() => {
+    const shouldStart = props.autoStart?.();
+    if (shouldStart && handle) {
+      console.log('[ChatPanelBridge] Auto-start triggered');
+      // Delay to let wake word release mic
+      setTimeout(() => handle?.connect(), 500);
+    }
+  });
+
+  onCleanup(() => {
+    handle?.unmount();
+    handle = null;
+  });
+
+  return (
+    <div
+      ref={container}
+      class="fixed right-4 bottom-4 z-50"
+      style={{ width: '380px' }}
+    />
+  );
+};
+
+export default ChatPanelBridge;
