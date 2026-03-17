@@ -1,0 +1,2764 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudNativeFormationForAssistantX - One-click cloud-native infrastructure stack.
+  Creates VPC(IPv6), EKS(Auto Mode), EnvoyGateway, Cognito OIDC,
+  CloudFront, Global Accelerator, IRSA test pod.
+  Region: ap-northeast-2 validated. Upload this single file to deploy.
+
+# ==============================================================================
+# METADATA - Console parameter grouping
+# ==============================================================================
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Stack Identity"
+        Parameters:
+          - ProjectName
+          - EnvironmentId
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCidr
+      - Label:
+          default: "EKS Configuration"
+        Parameters:
+          - EksVersion
+      - Label:
+          default: "EnvoyGateway"
+        Parameters:
+          - EnvoyGatewayVersion
+    ParameterLabels:
+      ProjectName:
+        default: "Project Name Prefix"
+      EnvironmentId:
+        default: "Unique Environment ID (e.g. 001)"
+      VpcCidr:
+        default: "VPC IPv4 CIDR"
+      EksVersion:
+        default: "Kubernetes Version"
+      EnvoyGatewayVersion:
+        default: "EnvoyGateway Version"
+
+# ==============================================================================
+# PARAMETERS
+# ==============================================================================
+Parameters:
+  ProjectName:
+    Type: String
+    Description: "Project name prefix for all resources (e.g. CloudNativeFormation, ProjectCNF)"
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9]{0,19}$"
+    ConstraintDescription: "Must start with a letter, 1-20 alphanumeric characters"
+    Default: "CloudNativeFormation"
+  EnvironmentId:
+    Type: String
+    Description: "Unique identifier appended to all resource names (e.g. 001, dev, prod)"
+    AllowedPattern: "^[a-zA-Z0-9]{1,12}$"
+    ConstraintDescription: "1-12 alphanumeric characters only"
+    Default: "001"
+  VpcCidr:
+    Type: String
+    Description: "VPC IPv4 CIDR block (/16)"
+    Default: "10.80.0.0/16"
+    AllowedPattern: '^[0-9]+\.[0-9]+\.[0-9]+\.0\/16$'
+  EksVersion:
+    Type: String
+    Description: "EKS Kubernetes version"
+    Default: "1.35"
+    AllowedValues: ["1.33", "1.34", "1.35"]
+  EnvoyGatewayVersion:
+    Type: String
+    Description: "EnvoyGateway release version"
+    Default: "v1.7.0"
+  AdminRoleArn:
+    Type: String
+    Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
+    Default: ""
+Conditions:
+  HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
+
+# ==============================================================================
+# MAPPINGS
+# ==============================================================================
+Mappings:
+  SubnetConfig:
+    PublicA:
+      CidrSuffix: "0.0/20"
+      AZ: 0
+      Ipv6Index: 0
+    PublicB:
+      CidrSuffix: "16.0/20"
+      AZ: 1
+      Ipv6Index: 1
+    PublicC:
+      CidrSuffix: "32.0/20"
+      AZ: 2
+      Ipv6Index: 2
+    PrivateA:
+      CidrSuffix: "128.0/20"
+      AZ: 0
+      Ipv6Index: 3
+    PrivateB:
+      CidrSuffix: "144.0/20"
+      AZ: 1
+      Ipv6Index: 4
+    PrivateC:
+      CidrSuffix: "160.0/20"
+      AZ: 2
+      Ipv6Index: 5
+
+# ==============================================================================
+# RESOURCES
+# ==============================================================================
+Resources:
+
+  # ============================================================================
+  # SECTION 0: PRE-FLIGHT QUOTA & CONFLICT CHECK
+  # Runs before any infrastructure is created. Fails immediately if AWS service
+  # quotas are insufficient or if a deployment with the same ProjectName +
+  # EnvironmentId already exists, preventing partial or conflicting stacks.
+  # Checks: EIP, VPC, NAT Gateway/AZ, m8g availability, EKS/IAM/Lambda/Cognito
+  # naming conflicts.
+  # ============================================================================
+
+  QuotaCheckRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: QuotaCheckPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeAccountAttributes
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeInstanceTypeOfferings
+                  - eks:DescribeCluster
+                  - iam:GetRole
+                  - lambda:GetFunction
+                  - cognito-idp:DescribeUserPoolDomain
+                  - sts:GetCallerIdentity
+                  - service-quotas:GetServiceQuota
+                Resource: "*"
+
+  QuotaCheckFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt QuotaCheckRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3, json, urllib.request
+          def handler(event, context):
+            def send(status, data={}, reason=''):
+              body = json.dumps({
+                'Status': status,
+                'Reason': reason or context.log_stream_name,
+                'PhysicalResourceId': event.get('PhysicalResourceId', context.log_stream_name),
+                'StackId': event['StackId'],
+                'RequestId': event['RequestId'],
+                'LogicalResourceId': event['LogicalResourceId'],
+                'Data': data,
+              }).encode()
+              req = urllib.request.Request(
+                event['ResponseURL'], data=body,
+                headers={'Content-Type': '', 'Content-Length': len(body)}, method='PUT')
+              urllib.request.urlopen(req)
+            if event['RequestType'] in ('Delete', 'Update'):
+              return send('SUCCESS')
+            p = event['ResourceProperties']
+            pn, eid, region = p['ProjectName'], p['EnvironmentId'], p['Region']
+            prefix = pn + eid
+            errors = []
+            ec2 = boto3.client('ec2', region_name=region)
+            sq = boto3.client('service-quotas', region_name=region)
+            # EIP quota
+            try:
+              used = len(ec2.describe_addresses()['Addresses'])
+              try: limit = int(sq.get_service_quota(ServiceCode='ec2', QuotaCode='L-0263D0A3')['Quota']['Value'])
+              except: limit = 5
+              if limit - used < 3:
+                errors.append(f"EIP: need 3 more, only {limit-used} free ({used}/{limit}). "
+                              "Increase quota: Service Quotas > EC2 > EC2-VPC Elastic IPs (L-0263D0A3).")
+            except Exception as e:
+              errors.append(f"EIP check error: {e}")
+            # VPC quota
+            try:
+              used = len(ec2.describe_vpcs()['Vpcs'])
+              try: limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-F678F1CE')['Quota']['Value'])
+              except: limit = 5
+              if limit - used < 1:
+                errors.append(f"VPC: {used}/{int(limit)} used, no capacity. "
+                              "Increase quota: Service Quotas > VPC > VPCs per Region (L-F678F1CE).")
+            except Exception as e:
+              errors.append(f"VPC check error: {e}")
+            # NAT Gateway quota per AZ
+            try:
+              try: nat_limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-FE5A380F')['Quota']['Value'])
+              except: nat_limit = 5
+              nats, token = [], None
+              while True:
+                kw = {'Filter': [{'Name': 'state', 'Values': ['available', 'pending']}]}
+                if token: kw['NextToken'] = token
+                resp = ec2.describe_nat_gateways(**kw)
+                nats.extend(resp['NatGateways'])
+                token = resp.get('NextToken')
+                if not token: break
+              if nats:
+                sids = list({n['SubnetId'] for n in nats})
+                sub_az = {}
+                try:
+                  sub_az = {s['SubnetId']: s['AvailabilityZone']
+                            for s in ec2.describe_subnets(SubnetIds=sids)['Subnets']}
+                except: pass
+                az_cnt = {}
+                for n in nats:
+                  az = sub_az.get(n['SubnetId'], n.get('SubnetId', '?'))
+                  az_cnt[az] = az_cnt.get(az, 0) + 1
+                for az, cnt in az_cnt.items():
+                  if cnt >= nat_limit:
+                    errors.append(f"NAT GW quota full in {az}: {cnt}/{int(nat_limit)}. "
+                                  "Increase quota: Service Quotas > VPC > NAT gateways per AZ (L-FE5A380F).")
+            except Exception as e:
+              errors.append(f"NAT GW check error: {e}")
+            # m8g instance availability (cpu-system NodePool)
+            try:
+              avail = ec2.describe_instance_type_offerings(
+                Filters=[{'Name': 'instance-type', 'Values': ['m8g.xlarge']}])['InstanceTypeOfferings']
+              if not avail:
+                errors.append(f"m8g.xlarge not available in {region}. "
+                              "Stack will deploy but cpu-system NodePool won't schedule pods.")
+            except Exception as e:
+              errors.append(f"m8g check error: {e}")
+            # EKS cluster name conflict
+            try:
+              eks = boto3.client('eks', region_name=region)
+              eks.describe_cluster(name=prefix)
+              errors.append(f"EKS cluster '{prefix}' already exists. Use a different EnvironmentId.")
+            except eks.exceptions.ResourceNotFoundException:
+              pass
+            except Exception as e:
+              errors.append(f"EKS conflict check error: {e}")
+            # IAM role name conflicts
+            iam = boto3.client('iam')
+            conflicting = []
+            for role in [f"{prefix}-EKSClusterRole", f"{prefix}-EKSNodeRole",
+                         f"{prefix}-KubectlLambdaRole", f"{prefix}-PodRole", f"{prefix}-EfsCsiRole"]:
+              try: iam.get_role(RoleName=role); conflicting.append(role)
+              except iam.exceptions.NoSuchEntityException: pass
+              except: pass
+            if conflicting:
+              errors.append(f"IAM roles already exist: {', '.join(conflicting)}. Use a different EnvironmentId.")
+            # Lambda function name conflicts
+            lm = boto3.client('lambda', region_name=region)
+            conflicting = []
+            for fn in [f"{prefix}-kubectl", f"{prefix}-cognito-setup", f"{prefix}-cognito-user-creator",
+                       f"{prefix}-eg-installer", f"{prefix}-nlb-lookup", f"{prefix}-helm-deploy"]:
+              try: lm.get_function(FunctionName=fn); conflicting.append(fn)
+              except lm.exceptions.ResourceNotFoundException: pass
+              except: pass
+            if conflicting:
+              errors.append(f"Lambda functions already exist: {', '.join(conflicting)}. Use a different EnvironmentId.")
+            # Cognito domain conflict
+            try:
+              acct = boto3.client('sts').get_caller_identity()['Account']
+              domain = f"cnf-{eid}-{acct}"
+              resp = boto3.client('cognito-idp', region_name=region).describe_user_pool_domain(Domain=domain)
+              if resp.get('DomainDescription', {}).get('Domain'):
+                errors.append(f"Cognito domain '{domain}' already exists. Use a different EnvironmentId.")
+            except Exception:
+              pass
+            # Result
+            if errors:
+              return send('FAILED', {},
+                f"PRE-FLIGHT CHECK FAILED ({len(errors)} issue(s)): " + " | ".join(errors))
+            send('SUCCESS', {'Message': 'All quota and conflict checks passed.'})
+
+  QuotaCheck:
+    Type: Custom::QuotaCheck
+    Properties:
+      ServiceToken: !GetAtt QuotaCheckFunction.Arn
+      ProjectName: !Ref ProjectName
+      EnvironmentId: !Ref EnvironmentId
+      Region: !Ref "AWS::Region"
+
+  # ============================================================================
+  # SECTION 1: VPC + NETWORKING (IPv6 Dual-Stack)
+  # ============================================================================
+
+  VPC:
+    Type: AWS::EC2::VPC
+    DependsOn: QuotaCheck
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-vpc"
+
+  IPv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: QuotaCheck
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-igw"
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  EgressOnlyIGW:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      VpcId: !Ref VPC
+
+  # --- Elastic IPs for NAT Gateways ---
+  EipNatA:
+    Type: AWS::EC2::EIP
+    DependsOn: QuotaCheck
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-eip-a"
+
+  EipNatB:
+    Type: AWS::EC2::EIP
+    DependsOn: QuotaCheck
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-eip-b"
+
+  EipNatC:
+    Type: AWS::EC2::EIP
+    DependsOn: QuotaCheck
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-eip-c"
+
+  # --- Public Subnets ---
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-public-a"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [1, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-public-b"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetC:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [2, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-public-c"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  # --- Private Subnets (IPv6 auto-assign) ---
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [8, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [3, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-private-a"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [9, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [4, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-private-b"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [10, !Cidr [!Ref VpcCidr, 16, "12"]]
+      Ipv6CidrBlock: !Select [5, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-private-c"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  # --- NAT Gateways (one per AZ) ---
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    DependsOn: IGWAttachment
+    Properties:
+      AllocationId: !GetAtt EipNatA.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-a"
+
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    DependsOn: IGWAttachment
+    Properties:
+      AllocationId: !GetAtt EipNatB.AllocationId
+      SubnetId: !Ref PublicSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-b"
+
+  NatGatewayC:
+    Type: AWS::EC2::NatGateway
+    DependsOn: IGWAttachment
+    Properties:
+      AllocationId: !GetAtt EipNatC.AllocationId
+      SubnetId: !Ref PublicSubnetC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-nat-c"
+
+  # --- Route Tables ---
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-rtb-public"
+
+  PublicRouteIpv4:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteIpv6:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationIpv6CidrBlock: "::/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetCRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetC
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Tables (one per AZ for independent NAT)
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-rtb-private-a"
+
+  PrivateRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayA
+
+  PrivateRouteA6:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationIpv6CidrBlock: "::/0"
+      EgressOnlyInternetGatewayId: !Ref EgressOnlyIGW
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTableA
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-rtb-private-b"
+
+  PrivateRouteB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayB
+
+  PrivateRouteB6:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationIpv6CidrBlock: "::/0"
+      EgressOnlyInternetGatewayId: !Ref EgressOnlyIGW
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTableB
+
+  PrivateRouteTableC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-rtb-private-c"
+
+  PrivateRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayC
+
+  PrivateRouteC6:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      DestinationIpv6CidrBlock: "::/0"
+      EgressOnlyInternetGatewayId: !Ref EgressOnlyIGW
+
+  PrivateSubnetCRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetC
+      RouteTableId: !Ref PrivateRouteTableC
+
+  # --- S3 Gateway Endpoint ---
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTableA
+        - !Ref PrivateRouteTableB
+        - !Ref PrivateRouteTableC
+
+  # ============================================================================
+  # SECTION 2: IAM ROLES
+  # ============================================================================
+
+  # --- EKS Cluster Role ---
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    DependsOn: QuotaCheck
+    Properties:
+      RoleName: !Sub "${ProjectName}${EnvironmentId}-EKSClusterRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+              - "sts:TagSession"   # Required for eks.7+ to use cluster role for Karpenter compute ops
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSComputePolicy
+        - arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy
+        - arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy
+
+  # --- EKS Node Role ---
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    DependsOn: QuotaCheck
+    Properties:
+      RoleName: !Sub "${ProjectName}${EnvironmentId}-EKSNodeRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
+
+  # --- Lambda Execution Role (for K8s resource management) ---
+  KubectlLambdaRole:
+    Type: AWS::IAM::Role
+    DependsOn: QuotaCheck
+    Properties:
+      RoleName: !Sub "${ProjectName}${EnvironmentId}-KubectlLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: EksAndSts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - eks:ListAddons
+                  - eks:DescribeAddon
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTargetGroups
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStackEvents
+                Resource: "*"
+
+  # --- Test Pod IRSA Role (via Pod Identity) ---
+  PodRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}${EnvironmentId}-PodRole"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]},
+                {"Effect":"Allow","Principal":{"Federated":"${OidcArn}"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"${OidcHost}:aud":"sts.amazonaws.com"}}}
+              ]
+            }
+          - OidcArn: !GetAtt EksOidcProvider.Arn
+            OidcHost: !Select [1, !Split ["https://", !GetAtt EksCluster.OpenIdConnectIssuerUrl]]
+      Policies:
+        - PolicyName: CNFPodReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: STSCallerIdentity
+                Effect: Allow
+                Action: sts:GetCallerIdentity
+                Resource: "*"
+              - Sid: IAMRoleRead
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}${EnvironmentId}-PodRole"
+              - Sid: BedrockFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock:*
+                Resource: "*"
+              - Sid: BedrockRuntimeFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock-runtime:*
+                Resource: "*"
+              - Sid: BedrockAgentRuntimeFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock-agent-runtime:*
+                Resource: "*"
+  EfsCsiRole:
+    Type: AWS::IAM::Role
+    DependsOn: QuotaCheck
+    Properties:
+      RoleName: !Sub "${ProjectName}${EnvironmentId}-EfsCsiRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+              - "sts:TagSession"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+
+  # ============================================================================
+  # SECTION 3: EKS CLUSTER
+  # ============================================================================
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    DependsOn:
+      - PrivateSubnetARouteAssoc
+      - PrivateSubnetBRouteAssoc
+      - PrivateSubnetCRouteAssoc
+      - PublicSubnetARouteAssoc
+      - PublicSubnetBRouteAssoc
+      - PublicSubnetCRouteAssoc
+      - NatGatewayA
+      - NatGatewayB
+      - NatGatewayC
+      - S3Endpoint
+    Properties:
+      Name: !Sub "${ProjectName}${EnvironmentId}"
+      Version: !Ref EksVersion
+      RoleArn: !GetAtt EksClusterRole.Arn
+      AccessConfig:
+        AuthenticationMode: API
+      BootstrapSelfManagedAddons: false
+      ComputeConfig:
+        Enabled: true
+        NodePools:
+          - system
+        NodeRoleArn: !GetAtt EksNodeRole.Arn
+      StorageConfig:
+        BlockStorage:
+          Enabled: true
+      KubernetesNetworkConfig:
+        IpFamily: ipv6
+        ElasticLoadBalancing:
+          Enabled: true
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+        PublicAccessCidrs:
+          - "0.0.0.0/0"
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}"
+
+  # --- EKS Access Entry for Lambda (cluster admin) ---
+  LambdaAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      ClusterName: !Ref EksCluster
+      PrincipalArn: !GetAtt KubectlLambdaRole.Arn
+      Type: STANDARD
+      AccessPolicies:
+        - AccessScope:
+            Type: cluster
+          PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+
+  # NodeAccessEntry is auto-created by EKS when NodeRoleArn is set in ComputeConfig.
+  # We do NOT create it explicitly — doing so would conflict with the auto-created entry.
+
+  AdminAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdminRole
+    Properties:
+      ClusterName: !Ref EksCluster
+      PrincipalArn: !Ref AdminRoleArn
+      Type: STANDARD
+      AccessPolicies:
+        - AccessScope:
+            Type: cluster
+          PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+
+  # --- Allow Lambda SG to reach EKS cluster private API endpoint (TCP 443) ---
+  ClusterSGIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt EksCluster.ClusterSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref KubectlLambdaSG
+      Description: "Allow Lambda to reach EKS API private endpoint"
+
+  # ============================================================================
+  # SECTION 3.5: EFS FILE SYSTEM
+  # ============================================================================
+
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    DependsOn: QuotaCheck
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-efs"
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroups:
+        - !GetAtt EksCluster.ClusterSecurityGroupId
+
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnetB
+      SecurityGroups:
+        - !GetAtt EksCluster.ClusterSecurityGroupId
+
+  EfsMountTargetC:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnetC
+      SecurityGroups:
+        - !GetAtt EksCluster.ClusterSecurityGroupId
+
+  # ============================================================================
+  # SECTION 4: EKS ADDONS
+  # ============================================================================
+
+  AddonVpcCni:
+    Type: AWS::EKS::Addon
+    DependsOn: LambdaAccessEntry
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: vpc-cni
+      ResolveConflicts: OVERWRITE
+      ConfigurationValues: !Sub |
+        {
+          "env": {
+            "ENABLE_V6_EGRESS": "true",
+            "ENABLE_PREFIX_DELEGATION": "true",
+            "WARM_PREFIX_TARGET": "1",
+            "WARM_IP_TARGET": "0",
+            "MINIMUM_IP_TARGET": "0"
+          },
+          "init": {
+            "env": {
+              "ENABLE_V6_EGRESS": "true",
+              "DISABLE_TCP_EARLY_DEMUX": "true"
+            }
+          }
+        }
+
+  AddonCoreDns:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: coredns
+      ResolveConflicts: OVERWRITE
+
+  AddonKubeProxy:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: kube-proxy
+      ResolveConflicts: OVERWRITE
+
+  AddonPodIdentity:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: eks-pod-identity-agent
+      ResolveConflicts: OVERWRITE
+
+  AddonMetricsServer:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonCoreDns
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: metrics-server
+      ResolveConflicts: OVERWRITE
+
+  AddonEfsCsi:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: aws-efs-csi-driver
+      ResolveConflicts: OVERWRITE
+
+  AddonS3Csi:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: aws-mountpoint-s3-csi-driver
+      ResolveConflicts: OVERWRITE
+
+  AddonCertManager:
+    Type: AWS::EKS::Addon
+    DependsOn: AddonVpcCni
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: cert-manager
+      ResolveConflicts: OVERWRITE
+      ConfigurationValues: |
+        {
+          "extraArgs": ["--enable-gateway-api=true"]
+        }
+
+  # --- IAM OIDC Provider for IRSA ---
+  EksOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - "06b25927c42a721631c1efd9431e648fa62e1e39"
+
+  # ============================================================================
+  # SECTION 5: KUBECTL LAMBDA FUNCTION (inline boto3/urllib3)
+  # ============================================================================
+
+  KubectlLambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName}${EnvironmentId} kubectl lambda SG"
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: "-1"
+          CidrIpv6: "::/0"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-kubectl-lambda-sg"
+
+  KubectlFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaAccessEntry
+      - ClusterSGIngressFromLambda
+      - AddonCoreDns
+      - AddonMetricsServer
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-kubectl"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 900
+      MemorySize: 512
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Environment:
+        Variables:
+          CLUSTER_NAME: !Ref EksCluster
+          REGION: !Ref "AWS::Region"
+      Code:
+        ZipFile: |
+          import base64,json,logging,tempfile,time,urllib3,boto3
+          from botocore.signers import RequestSigner
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          _CTX=None
+          def has_time(margin=60):
+            return _CTX is None or _CTX.get_remaining_time_in_millis()>margin*1000
+          CORE={"Namespace":("api/v1","namespaces",0),"Service":("api/v1","services",1),"ConfigMap":("api/v1","configmaps",1),"Secret":("api/v1","secrets",1),"ServiceAccount":("api/v1","serviceaccounts",1),"Pod":("api/v1","pods",1)}
+          GRP={"Deployment":("apis/apps/v1","deployments",1),"DaemonSet":("apis/apps/v1","daemonsets",1),"ClusterRole":("apis/rbac.authorization.k8s.io/v1","clusterroles",0),"ClusterRoleBinding":("apis/rbac.authorization.k8s.io/v1","clusterrolebindings",0),"Role":("apis/rbac.authorization.k8s.io/v1","roles",1),"RoleBinding":("apis/rbac.authorization.k8s.io/v1","rolebindings",1),"CustomResourceDefinition":("apis/apiextensions.k8s.io/v1","customresourcedefinitions",0),"StorageClass":("apis/storage.k8s.io/v1","storageclasses",0),"PersistentVolume":("api/v1","persistentvolumes",0),"PersistentVolumeClaim":("api/v1","persistentvolumeclaims",1),"ClusterIssuer":("apis/cert-manager.io/v1","clusterissuers",0),"Certificate":("apis/cert-manager.io/v1","certificates",1)}
+          PLURALS={"GatewayClass":"gatewayclasses","Gateway":"gateways","HTTPRoute":"httproutes","TCPRoute":"tcproutes","TLSRoute":"tlsroutes","GRPCRoute":"grpcroutes","EnvoyProxy":"envoyproxies","SecurityPolicy":"securitypolicies","BackendTrafficPolicy":"backendtrafficpolicies","ClientTrafficPolicy":"clienttrafficpolicies","EnvoyExtensionPolicy":"envoyextensionpolicies","BackendLBPolicy":"backendlbpolicies","ReferenceGrant":"referencegrants","NodePool":"nodepools","NodeClass":"nodeclasses"}
+          INT_FIELDS={"port","replicas","containerPort","hostPort","targetPort","terminationGracePeriodSeconds","timeoutSeconds","initialDelaySeconds","periodSeconds","successThreshold","failureThreshold","weight","minReadySeconds","minReplicas","maxReplicas","revisionHistoryLimit","progressDeadlineSeconds","iops","throughput","runAsUser","runAsGroup","fsGroup","runAsNonRoot","value","maxConcurrentStreams","maxAcceptPerSocketEvent","initialStreamWindowSize","initialConnectionWindowSize"}
+          BOOL_FIELDS={"preserveHeaderCase","enabled","readOnly","optional","hostNetwork","shareProcessNamespace"}
+          def coerce_ints(obj,key=None):
+            if isinstance(obj,dict):return{k:coerce_ints(v,k) for k,v in obj.items()}
+            if isinstance(obj,list):return[coerce_ints(i,key) for i in obj]
+            if isinstance(obj,str) and key in INT_FIELDS and obj.lstrip('-').isdigit():
+              try:return int(obj)
+              except:pass
+            if isinstance(obj,str) and key in BOOL_FIELDS and obj.lower() in("true","false"):
+              return obj.lower()=="true"
+            return obj
+          def get_token(session,cluster,region):
+            sts=session.client("sts",region_name=region)
+            si=sts.meta.service_model.service_id
+            sg=RequestSigner(si,region,"sts","v4",session.get_credentials(),session.events)
+            p={"method":"GET","url":f"https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15","body":{},"headers":{"x-k8s-aws-id":cluster},"context":{}}
+            u=sg.generate_presigned_url(p,region_name=region,expires_in=60,operation_name="")
+            return "k8s-aws-v1."+base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+          def rpath(av,kind,ns):
+            for t in[CORE,GRP]:
+              if kind in t:
+                px,pl,nsd=t[kind]
+                return f"/{px}/namespaces/{ns}/{pl}" if nsd and ns else f"/{px}/{pl}"
+            pl=PLURALS.get(kind,kind.lower()+"s")
+            px=f"apis/{av}" if "/" in av else f"api/{av}"
+            return f"/{px}/namespaces/{ns}/{pl}" if ns else f"/{px}/{pl}"
+          def k8s_apply(http,ep,token,m,retries=20):
+            av=m.get("apiVersion","");kind=m.get("kind","");md=m.get("metadata",{})
+            name=md.get("name","");ns=md.get("namespace")
+            p=rpath(av,kind,ns)
+            hd={"Authorization":f"Bearer {token}","Content-Type":"application/json","Accept":"application/json"}
+            b=json.dumps(m).encode()
+            # Retry on 422 (CRD schema not yet established) with backoff
+            for attempt in range(retries):
+              if not has_time(120):break
+              r=http.request("POST",f"{ep}{p}",headers=hd,body=b)
+              if r.status==409:
+                hd["Content-Type"]="application/merge-patch+json"
+                r=http.request("PATCH",f"{ep}{p}/{name}",headers=hd,body=b)
+                return "updated",r.status,json.loads(r.data.decode()) if r.data else {}
+              if r.status==422 and attempt<retries-1:
+                wait=min(30,5*(attempt+1))
+                if attempt==0:
+                  try:L.warning(f"422 body: {r.data.decode()[:500]}")
+                  except:pass
+                L.warning(f"422 on {kind}/{name}, retry {attempt+1}/{retries-1} in {wait}s")
+                time.sleep(wait);continue
+              return("created" if 200<=r.status<300 else "error"),r.status,json.loads(r.data.decode()) if r.data else {}
+            return "error",422,{}
+          def k8s_delete(http,ep,token,m):
+            av=m.get("apiVersion","");kind=m.get("kind","");md=m.get("metadata",{})
+            name=md.get("name","");ns=md.get("namespace")
+            p=rpath(av,kind,ns)
+            hd={"Authorization":f"Bearer {token}","Accept":"application/json"}
+            r=http.request("DELETE",f"{ep}{p}/{name}",headers=hd)
+            return("deleted" if 200<=r.status<300 or r.status==404 else "error"),r.status
+          def k8s_get(http,ep,token,av,kind,name,ns=None):
+            p=rpath(av,kind,ns)
+            hd={"Authorization":f"Bearer {token}","Accept":"application/json"}
+            r=http.request("GET",f"{ep}{p}/{name}",headers=hd)
+            return r.status,json.loads(r.data.decode()) if r.data else {}
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"See logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or {}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          MAX_REINVOKES=4  # 4 reinvokes × 15min = 75min total
+          def reinvoke_or_fail(event,ctx,reason):
+            attempt=event.get("_Attempt",0)
+            if attempt<MAX_REINVOKES:
+              L.info(f"Timeout approaching, reinvoking (attempt {attempt+1}/{MAX_REINVOKES})...")
+              event["_Attempt"]=attempt+1
+              boto3.client("lambda").invoke(FunctionName=ctx.function_name,InvocationType="Event",Payload=json.dumps(event))
+            else:
+              L.error(f"Max reinvokes reached: {reason}")
+              send_cfn(event,ctx,"FAILED",reason=reason)
+          def handler(event,ctx):
+            global _CTX;_CTX=ctx
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            # For Delete: clean up K8s resources and wait for NLB removal before signaling SUCCESS
+            if rt=="Delete":
+              try:
+                cn=props["ClusterName"];region=props.get("Region",boto3.session.Session().region_name)
+                sess=boto3.Session(region_name=region)
+                eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+                ep=ci["endpoint"];ca=ci["certificateAuthority"]["data"]
+                tf=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+                tf.write(base64.b64decode(ca));tf.flush();tf.close()
+                http=urllib3.PoolManager(cert_reqs="CERT_REQUIRED",ca_certs=tf.name,timeout=urllib3.Timeout(connect=10,read=10))
+                token=get_token(sess,cn,region)
+                manifests=props.get("Manifests",[])
+                if isinstance(manifests,str):manifests=json.loads(manifests)
+                for m in reversed(manifests):
+                  a,s=k8s_delete(http,ep,token,m)
+                  lbl=f"{m.get('kind')}/{m.get('metadata',{}).get('name')}"
+                  L.info(f"{a} {lbl} HTTP {s}")
+                # Wait for NLB to be fully deprovisioned (Gateway deletion triggers async NLB removal)
+                ns_val=props.get("Namespace","")
+                for wait_att in range(60):
+                  if ctx.get_remaining_time_in_millis()<30000:break
+                  token=get_token(sess,cn,region)
+                  hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                  found_lb=False
+                  for search_ns in ["envoy-gateway-system",ns_val]:
+                    if not search_ns:continue
+                    r=http.request("GET",f"{ep}/api/v1/namespaces/{search_ns}/services",headers=hd_base)
+                    if r.status==200:
+                      svcs=json.loads(r.data.decode())
+                      for svc in svcs.get("items",[]):
+                        if svc.get("spec",{}).get("type")=="LoadBalancer":
+                          found_lb=True;break
+                    if found_lb:break
+                  if not found_lb:L.info("No LoadBalancer services remaining");break
+                  L.info(f"Waiting for LB services to be removed, attempt {wait_att+1}");time.sleep(10)
+              except Exception as de:
+                L.warning(f"Delete cleanup (non-fatal): {de}")
+              send_cfn(event,ctx,"SUCCESS",pid=event.get("PhysicalResourceId",ctx.log_stream_name))
+              return
+            try:
+              cn=props["ClusterName"];region=props.get("Region",boto3.session.Session().region_name)
+              sess=boto3.Session(region_name=region)
+              eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+              ep=ci["endpoint"];ca=ci["certificateAuthority"]["data"]
+              tf=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+              tf.write(base64.b64decode(ca));tf.flush();tf.close()
+              http=urllib3.PoolManager(cert_reqs="CERT_REQUIRED",ca_certs=tf.name)
+              token=get_token(sess,cn,region)
+              # --- Verify all EKS addons are ACTIVE before proceeding ---
+              if rt=="Create":
+                L.info("Checking EKS addon health...")
+                try:
+                  addon_names=eks.list_addons(clusterName=cn).get("addons",[])
+                  L.info(f"Addons: {addon_names}")
+                  for addon_att in range(360):
+                    if not has_time(300):break  # Leave 5min for manifest apply
+                    unhealthy=[]
+                    for addon in addon_names:
+                      try:
+                        ad=eks.describe_addon(clusterName=cn,addonName=addon)["addon"]
+                        st=ad.get("status","")
+                        if st!="ACTIVE":
+                          issues=[i.get("message","") for i in ad.get("health",{}).get("issues",[])]
+                          L.warning(f"Addon {addon}: {st} issues={issues}")
+                          unhealthy.append(f"{addon}:{st}")
+                      except Exception as ae:L.warning(f"describe_addon {addon}: {ae}")
+                    if not unhealthy:
+                      L.info("All addons ACTIVE");break
+                    L.info(f"Unhealthy addons: {unhealthy}, attempt {addon_att+1}");time.sleep(10)
+                  if unhealthy:L.warning(f"Proceeding with unhealthy addons: {unhealthy}")
+                except Exception as ae2:L.warning(f"Addon health check failed (non-fatal): {ae2}")
+              # --- Restart deployments to pick up Pod Identity credentials ---
+              restart_list=props.get("RestartDeployments","")
+              if restart_list and rt=="Create":
+                token=get_token(sess,cn,region)
+                hd_p={"Authorization":f"Bearer {token}","Content-Type":"application/strategic-merge-patch+json","Accept":"application/json"}
+                for item in restart_list.split(","):
+                  rns,rname=item.strip().split("/",1)
+                  patch=json.dumps({"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}}}}}).encode()
+                  r=http.request("PATCH",f"{ep}/apis/apps/v1/namespaces/{rns}/deployments/{rname}",headers=hd_p,body=patch)
+                  L.info(f"Restart {item}: HTTP {r.status}")
+              manifests=props.get("Manifests",[])
+              if isinstance(manifests,str):manifests=json.loads(manifests)
+              manifests=coerce_ints(manifests)
+              results=[]
+              if rt in("Create","Update"):
+                # Refresh token (may have expired during addon wait)
+                token=get_token(sess,cn,region)
+                for m in manifests:
+                  a,s,d=k8s_apply(http,ep,token,m)
+                  lbl=f"{m.get('kind')}/{m.get('metadata',{}).get('name')}"
+                  L.info(f"{a} {lbl} HTTP {s}")
+                  results.append({"r":lbl,"a":a,"s":s})
+                  if a=="error":L.error(f"Error on {lbl}: {json.dumps(d)}")
+              errs=[r for r in results if r["a"]=="error"]
+              if errs:
+                # If all manifests failed with 422, likely API not ready - reinvoke
+                all_422=[r for r in errs if r["s"]==422]
+                if all_422 and len(all_422)==len(errs):
+                  reinvoke_or_fail(event,ctx,f"All {len(errs)} manifests got 422, API not ready");return
+                send_cfn(event,ctx,"FAILED",reason=json.dumps(errs[:3])[:256]);return
+              env_id=props.get("EnvironmentId",cn.split("-")[-1] if "-" in cn else "001")
+              ns_val=props.get("Namespace",f"cnf-{env_id}")
+              hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
+              nlb_dns="";nlb_arn=""
+              if rt=="Create":
+                # --- Wait for default NodeClass to become Ready (Karpenter system pool) ---
+                # Refresh token before long wait loops
+                token=get_token(sess,cn,region)
+                L.info("Waiting for NodeClass 'default' to become Ready...")
+                for nc_att in range(360):
+                  if not has_time(120):break
+                  token=get_token(sess,cn,region)
+                  nc_s,nc_d=k8s_get(http,ep,token,"eks.amazonaws.com/v1","NodeClass","default")
+                  if nc_s==200:
+                    nc_conds={c["type"]:c["status"] for c in nc_d.get("status",{}).get("conditions",[])}
+                    L.info(f"NodeClass conditions: {nc_conds}")
+                    if nc_conds.get("Ready")=="True":
+                      L.info("NodeClass default is Ready!");break
+                  L.info(f"NodeClass not Ready yet, attempt {nc_att+1}");time.sleep(10)
+                # --- Wait for at least 1 Ready node ---
+                L.info("Waiting for at least 1 Ready node...")
+                node_ready=False
+                for nd_att in range(360):
+                  if not has_time(120):break
+                  token=get_token(sess,cn,region)
+                  hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                  r_nodes=http.request("GET",f"{ep}/api/v1/nodes",headers=hd_base)
+                  if r_nodes.status==200:
+                    nd=json.loads(r_nodes.data.decode())
+                    for node in nd.get("items",[]):
+                      conds={c["type"]:c["status"] for c in node.get("status",{}).get("conditions",[])}
+                      if conds.get("Ready")=="True":
+                        L.info(f"Node ready: {node['metadata']['name']}");node_ready=True;break
+                  if node_ready:break
+                  L.info(f"No Ready nodes yet, attempt {nd_att+1}");time.sleep(10)
+                if not node_ready:
+                  reinvoke_or_fail(event,ctx,"No Ready nodes before timeout");return
+                # --- Wait for envoy-gateway pods to be Running ---
+                L.info("Waiting for envoy-gateway controller to be Running...")
+                eg_ready=False
+                for eg_att in range(360):
+                  if not has_time(120):break
+                  token=get_token(sess,cn,region)
+                  hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                  r_pods=http.request("GET",f"{ep}/api/v1/namespaces/envoy-gateway-system/pods",headers=hd_base)
+                  if r_pods.status==200:
+                    pods=json.loads(r_pods.data.decode())
+                    running=[p for p in pods.get("items",[]) if p.get("status",{}).get("phase")=="Running"]
+                    if running:
+                      L.info(f"EnvoyGateway controller running: {len(running)} pods");eg_ready=True;break
+                  L.info(f"EnvoyGateway pods not running yet, attempt {eg_att+1}");time.sleep(10)
+                if not eg_ready:L.warning("EnvoyGateway controller not ready, continuing anyway")
+                # --- Wait for NLB hostname on envoy service ---
+                # EnvoyGateway deploys proxy service in envoy-gateway-system, not in the Gateway's namespace
+                L.info("Waiting for NLB hostname on envoy service...")
+                for lb_att in range(360):
+                  if not has_time(120):break
+                  token=get_token(sess,cn,region)
+                  hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                  for search_ns in ["envoy-gateway-system",ns_val]:
+                    r_svcs=http.request("GET",f"{ep}/api/v1/namespaces/{search_ns}/services",headers=hd_base)
+                    if r_svcs.status==200:
+                      svcs=json.loads(r_svcs.data.decode())
+                      for svc in svcs.get("items",[]):
+                        sn=svc.get("metadata",{}).get("name","")
+                        if "envoy" in sn:
+                          ingress=svc.get("status",{}).get("loadBalancer",{}).get("ingress",[])
+                          if ingress:
+                            nlb_dns=ingress[0].get("hostname","")
+                            L.info(f"NLB DNS: {nlb_dns} on svc {sn} in ns {search_ns}");break
+                    if nlb_dns:break
+                  if nlb_dns:break
+                  L.info(f"NLB not ready yet, attempt {lb_att+1}");time.sleep(10)
+                if not nlb_dns:
+                  reinvoke_or_fail(event,ctx,"NLB hostname not assigned before timeout");return
+                # Resolve NLB ARN
+                try:
+                  elb=sess.client("elbv2")
+                  for lb in elb.describe_load_balancers().get("LoadBalancers",[]):
+                    if lb.get("DNSName","")==nlb_dns:nlb_arn=lb["LoadBalancerArn"];break
+                except Exception as ea:L.warning(f"NLB ARN lookup: {ea}")
+              send_cfn(event,ctx,"SUCCESS",data={"Result":json.dumps(results[:5]),"NlbDns":nlb_dns,"NlbArn":nlb_arn},pid=f"{cn}-k8s-{event['LogicalResourceId']}")
+            except Exception as e:
+              L.exception("fail")
+              send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  # ============================================================================
+  # SECTION 6: COGNITO USER POOL + OIDC
+  # ============================================================================
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    DependsOn: QuotaCheck
+    Properties:
+      UserPoolName: !Sub "${ProjectName}${EnvironmentId}"
+      AutoVerifiedAttributes:
+        - email
+      AliasAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: name
+          Required: true
+          Mutable: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "cnf-${EnvironmentId}-${AWS::AccountId}"
+      ManagedLoginVersion: 2
+      UserPoolId: !Ref CognitoUserPool
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: CognitoUserPoolDomain
+    Properties:
+      ClientName: !Sub "${ProjectName}${EnvironmentId}-app"
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_USER_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - openid
+        - profile
+        - email
+        - phone
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub "https://${CloudFrontDistribution.DomainName}/auth/oidc/callback"
+      LogoutURLs:
+        - !Sub "https://${CloudFrontDistribution.DomainName}/auth/oidc/logout"
+
+  CognitoManagedLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientId: !Ref CognitoUserPoolClient
+      UseCognitoProvidedValues: true
+
+  # Lambda to create Cognito admin user
+  CognitoUserCreatorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-user-creator"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 128
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json,logging,boto3,secrets,string,urllib3
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          def gen_pwd(length=16):
+            chars=string.ascii_letters+string.digits+"!@#$%^&*()"
+            while True:
+              pwd=''.join(secrets.choice(chars) for _ in range(length))
+              if (any(c.islower() for c in pwd) and any(c.isupper() for c in pwd) and 
+                  any(c.isdigit() for c in pwd) and any(c in "!@#$%^&*()" for c in pwd)):
+                return pwd
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}",
+              "PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),
+              "StackId":event["StackId"],"RequestId":event["RequestId"],
+              "LogicalResourceId":event["LogicalResourceId"],"Data":data or {}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            if rt=="Delete":
+              send_cfn(event,ctx,"SUCCESS",pid="cognito-admin-user");return
+            try:
+              pool_id=props["UserPoolId"];username=props.get("Username","admin@example.com")
+              region=props.get("Region",boto3.session.Session().region_name)
+              cog=boto3.client("cognito-idp",region_name=region)
+              password=gen_pwd(16)
+              uname=username.split("@")[0]
+              try:
+                cog.admin_create_user(UserPoolId=pool_id,Username=uname,
+                  TemporaryPassword=password,MessageAction="SUPPRESS",
+                  UserAttributes=[{"Name":"email","Value":username},
+                    {"Name":"email_verified","Value":"true"},
+                    {"Name":"name","Value":uname.replace("."," ").title()}])
+                L.info(f"Created user {username}")
+              except cog.exceptions.UsernameExistsException:
+                L.info(f"User {uname} already exists, resetting password")
+              cog.admin_set_user_password(UserPoolId=pool_id,Username=uname,
+                Password=password,Permanent=True)
+              L.info(f"Set permanent password for {uname}")
+              send_cfn(event,ctx,"SUCCESS",data={"Username":username,"Password":password},pid="cognito-admin-user")
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  CognitoAdminUser:
+    Type: Custom::CognitoUser
+    DependsOn: CognitoUserPool
+    Properties:
+      ServiceToken: !GetAtt CognitoUserCreatorFunction.Arn
+      UserPoolId: !Ref CognitoUserPool
+      Username: admin@cnf.local
+      Region: !Ref "AWS::Region"
+
+  # ============================================================================
+  # SECTION 7: KUBERNETES RESOURCES - EnvoyGateway + Gateway + App Resources
+  # ============================================================================
+
+  # Lambda to fetch and install EnvoyGateway from release manifests
+  EnvoyGatewayInstaller:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaAccessEntry
+      - ClusterSGIngressFromLambda
+      - AddonCoreDns
+      - AddonKubeProxy
+      - AddonMetricsServer
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-eg-installer"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 900
+      MemorySize: 1024
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import base64,json,logging,tempfile,time,urllib3,boto3,re
+          from botocore.signers import RequestSigner
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          def get_token(sess,cluster,region):
+            sts=sess.client("sts",region_name=region);si=sts.meta.service_model.service_id
+            sg=RequestSigner(si,region,"sts","v4",sess.get_credentials(),sess.events)
+            p={"method":"GET","url":f"https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15","body":{},"headers":{"x-k8s-aws-id":cluster},"context":{}}
+            u=sg.generate_presigned_url(p,region_name=region,expires_in=60,operation_name="")
+            return "k8s-aws-v1."+base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+          PLURALS={"BackendLBPolicy":"backendlbpolicies","GatewayClass":"gatewayclasses","HTTPRoute":"httproutes","GRPCRoute":"grpcroutes","TCPRoute":"tcproutes","TLSRoute":"tlsroutes","ReferenceGrant":"referencegrants","BackendTLSPolicy":"backendtlspolicies","EnvoyProxy":"envoyproxies","SecurityPolicy":"securitypolicies","BackendTrafficPolicy":"backendtrafficpolicies","ClientTrafficPolicy":"clienttrafficpolicies","EnvoyExtensionPolicy":"envoyextensionpolicies","EnvoyPatchPolicy":"envoypatchpolicies","HTTPRouteFilter":"httproutefilters","Backend":"backends","Namespace":"namespaces","Service":"services","ServiceAccount":"serviceaccounts","Deployment":"deployments","ConfigMap":"configmaps","Secret":"secrets","CustomResourceDefinition":"customresourcedefinitions","ClusterRole":"clusterroles","ClusterRoleBinding":"clusterrolebindings","Role":"roles","RoleBinding":"rolebindings","ValidatingWebhookConfiguration":"validatingwebhookconfigurations","MutatingWebhookConfiguration":"mutatingwebhookconfigurations","Gateway":"gateways","NodePool":"nodepools","NodeClass":"nodeclasses"}
+          NONNS={"Namespace","CustomResourceDefinition","ClusterRole","ClusterRoleBinding","GatewayClass","ValidatingWebhookConfiguration","MutatingWebhookConfiguration","PriorityClass","StorageClass"}
+          def extract_meta(doc):
+            """Extract apiVersion, kind, name, namespace from raw YAML text using regex."""
+            av=re.search(r'^apiVersion:\s*(.+)',doc,re.M)
+            kd=re.search(r'^kind:\s*(.+)',doc,re.M)
+            nm=re.search(r'^\s{2}name:\s*(.+)',doc,re.M)
+            ns=re.search(r'^\s{2}namespace:\s*(.+)',doc,re.M)
+            if not av or not kd or not nm:return None
+            def _unquote(s):return s.strip().strip("'\"")
+            return _unquote(av.group(1)),_unquote(kd.group(1)),_unquote(nm.group(1)),_unquote(ns.group(1)) if ns else None
+          def rpath(av,kind,ns):
+            pl=PLURALS.get(kind,kind.lower()+"s")
+            px=f"apis/{av}" if "/" in av else f"api/{av}"
+            if kind in NONNS or not ns:return f"/{px}/{pl}"
+            return f"/{px}/namespaces/{ns}/{pl}"
+          def apply_yaml_doc(http,ep,token,doc,av,kind,name,ns):
+            """Apply a single YAML document to K8s API using server-side apply."""
+            p=rpath(av,kind,ns)
+            hd={"Authorization":f"Bearer {token}","Content-Type":"application/yaml","Accept":"application/json"}
+            r=http.request("POST",f"{ep}{p}",headers=hd,body=doc.encode("utf-8"),timeout=30)
+            if r.status in(409,422):
+              # Use server-side apply (PATCH with fieldManager)
+              hd["Content-Type"]="application/apply-patch+yaml"
+              r=http.request("PATCH",f"{ep}{p}/{name}?fieldManager=cfn&force=true",headers=hd,body=doc.encode("utf-8"),timeout=30)
+              return "updated",r.status
+            return("created" if 200<=r.status<300 else "error"),r.status
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or {}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            # For Delete: clean up envoy-gateway-system namespace then signal SUCCESS
+            if rt=="Delete":
+              try:
+                cn=props["ClusterName"];region=props.get("Region",boto3.session.Session().region_name)
+                sess=boto3.Session(region_name=region)
+                eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+                ep=ci["endpoint"];ca=ci["certificateAuthority"]["data"]
+                tf=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+                tf.write(base64.b64decode(ca));tf.flush();tf.close()
+                http=urllib3.PoolManager(cert_reqs="CERT_REQUIRED",ca_certs=tf.name,timeout=urllib3.Timeout(connect=10,read=10))
+                token=get_token(sess,cn,region)
+                hd={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                http.request("DELETE",f"{ep}/api/v1/namespaces/envoy-gateway-system",headers=hd)
+                L.info("Deleted envoy-gateway-system namespace, waiting for cleanup...")
+                for w in range(60):
+                  if ctx.get_remaining_time_in_millis()<30000:break
+                  token=get_token(sess,cn,region)
+                  hd={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                  r=http.request("GET",f"{ep}/api/v1/namespaces/envoy-gateway-system",headers=hd)
+                  if r.status==404:L.info("envoy-gateway-system fully removed");break
+                  L.info(f"Waiting for ns deletion, attempt {w+1}");time.sleep(10)
+              except Exception as de:
+                L.warning(f"Delete cleanup (non-fatal): {de}")
+              send_cfn(event,ctx,"SUCCESS",pid=event.get("PhysicalResourceId",ctx.log_stream_name))
+              return
+            try:
+              cn=props["ClusterName"];region=props.get("Region",boto3.session.Session().region_name)
+              version=props.get("Version","v1.4.0")
+              sess=boto3.Session(region_name=region)
+              eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+              ep=ci["endpoint"];ca=ci["certificateAuthority"]["data"]
+              tf=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+              tf.write(base64.b64decode(ca));tf.flush();tf.close()
+              http=urllib3.PoolManager(cert_reqs="CERT_REQUIRED",ca_certs=tf.name)
+              token=get_token(sess,cn,region)
+              if rt in("Create","Update"):
+                L.info(f"Fetching EnvoyGateway {version} install manifest...")
+                ext=urllib3.PoolManager()
+                url=f"https://github.com/envoyproxy/gateway/releases/download/{version}/install.yaml"
+                r=ext.request("GET",url,redirect=True,timeout=120)
+                if r.status!=200:
+                  send_cfn(event,ctx,"FAILED",reason=f"Failed fetch EG: HTTP {r.status}");return
+                raw=r.data.decode("utf-8")
+                # Split multi-document YAML on --- separator; strip Helm-style leading comment blocks
+                def _strip_comments(s):
+                  lines=s.strip().splitlines()
+                  for i,l in enumerate(lines):
+                    if l.strip() and not l.strip().startswith("#"):return "\n".join(lines[i:]).strip()
+                  return ""
+                docs=[_strip_comments(d) for d in re.split(r'^---\s*$',raw,flags=re.M) if d.strip()]
+                docs=[d for d in docs if d and d.startswith("apiVersion")]
+                L.info(f"Split into {len(docs)} YAML documents")
+                # Sort: Namespace first, then CRD, then everything else (ensures ns exists before namespaced resources)
+                def _sort_key(d):
+                  m=extract_meta(d)
+                  if not m: return 2
+                  kind=m[1]
+                  if kind=="Namespace": return 0
+                  if kind=="CustomResourceDefinition": return 1
+                  return 2
+                docs.sort(key=_sort_key)
+                # Apply Namespaces first with a brief wait to ensure they propagate
+                ns_applied=False
+                ok=0;fail=0;skip=0
+                for doc in docs:
+                  meta=extract_meta(doc)
+                  if not meta:skip+=1;continue
+                  av,kind,name,ns=meta
+                  a,s=apply_yaml_doc(http,ep,token,doc,av,kind,name,ns)
+                  if a=="error":
+                    L.error(f"ERR {kind}/{name} HTTP {s}");fail+=1
+                  else:
+                    ok+=1
+                    if kind=="Namespace" and not ns_applied:
+                      ns_applied=True;time.sleep(3)  # Brief pause after namespace creation
+                  if (ok+fail)%10==0:L.info(f"Progress: {ok} ok, {fail} fail, {skip} skip")
+                L.info(f"EnvoyGateway install done: {ok} ok, {fail} fail, {skip} skip")
+                if fail>10:
+                  send_cfn(event,ctx,"FAILED",reason=f"Too many failures: {fail}");return
+                send_cfn(event,ctx,"SUCCESS",data={"Ok":str(ok),"Fail":str(fail)},pid=f"{cn}-envoy-gateway")
+            except Exception as e:
+              L.exception("fail")
+              send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  # Custom Resource: Install EnvoyGateway
+  InstallEnvoyGateway:
+    Type: Custom::EnvoyGatewayInstall
+    DependsOn:
+      - AddonCoreDns
+      - AddonKubeProxy
+      - AddonVpcCni
+      - AddonPodIdentity
+    Properties:
+      ServiceToken: !GetAtt EnvoyGatewayInstaller.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      Version: !Ref EnvoyGatewayVersion
+
+  # Custom Resource: Create namespace, GatewayClass, EnvoyProxy, Gateway
+  K8sInfraResources:
+    Type: Custom::K8sInfra
+    DependsOn:
+      - InstallEnvoyGateway
+      - EfsCsiPodIdentityAssoc
+    Properties:
+      ServiceToken: !GetAtt KubectlFunction.Arn
+      RestartDeployments: "kube-system/efs-csi-controller"
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      Manifests:
+        # --- GatewayClass ---
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: !Sub "cnf-${EnvironmentId}-eg"
+          spec:
+            controllerName: gateway.envoyproxy.io/gatewayclass-controller
+            parametersRef:
+              group: gateway.envoyproxy.io
+              kind: EnvoyProxy
+              name: custom-proxy-config
+              namespace: envoy-gateway-system
+        # --- EnvoyProxy (custom config for IPv6 + NLB) ---
+        - apiVersion: gateway.envoyproxy.io/v1alpha1
+          kind: EnvoyProxy
+          metadata:
+            name: custom-proxy-config
+            namespace: envoy-gateway-system
+          spec:
+            ipFamily: IPv6
+            provider:
+              type: Kubernetes
+              kubernetes:
+                envoyDeployment:
+                  replicas: 2
+                  container:
+                    resources:
+                      requests:
+                        cpu: "100m"
+                        memory: "256Mi"
+                      limits:
+                        cpu: "500m"
+                        memory: "512Mi"
+                envoyService:
+                  type: LoadBalancer
+                  annotations:
+                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                    service.beta.kubernetes.io/aws-load-balancer-ip-address-type: dualstack
+                    service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
+                  externalTrafficPolicy: Local
+        # --- Gateway (HTTP:80 + HTTPS:443) ---
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: eg
+            namespace: envoy-gateway-system
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-gateway
+          spec:
+            gatewayClassName: !Sub "cnf-${EnvironmentId}-eg"
+            infrastructure:
+              parametersRef:
+                group: gateway.envoyproxy.io
+                kind: EnvoyProxy
+                name: custom-proxy-config
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: eg-https-cert
+
+              - name: https-7883
+                port: 7883
+                protocol: HTTPS
+                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
+              - name: tcp-7881
+                port: 7881
+                protocol: TCP
+                allowedRoutes:
+                  kinds:
+                    - kind: TCPRoute
+                  namespaces:
+                    from: All
+        # --- Custom NodePool: cpu-system (replaces built-in system for m8g.xlarge) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-system
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            template:
+              metadata:
+                labels:
+                  usage: system
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default
+                requirements:
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m8g.xlarge
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+                taints:
+                  - effect: NoSchedule
+                    key: CriticalAddonsOnly
+                terminationGracePeriod: 24h0m0s
+        # --- Custom NodePool: cpu (arm64 m8g general workloads) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default
+                requirements:
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - m8g
+                  - key: eks.amazonaws.com/instance-cpu
+                    operator: In
+                    values:
+                      - "2"
+                      - "4"
+                      - "8"
+                      - "16"
+                      - "32"
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - arm64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+        # --- Custom NodePool: cpu-large (arm64 m8g large with taint) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-large
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu-large
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default
+                requirements:
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - m8g
+                  - key: eks.amazonaws.com/instance-cpu
+                    operator: In
+                    values:
+                      - "8"
+                      - "16"
+                      - "32"
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - arm64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                taints:
+                  - effect: NoSchedule
+                    key: size
+                    value: "large"
+        # --- Custom NodePool: gpu (nvidia g6e.2xlarge) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: gpu
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+              nvidia.com/gpu: 32
+            template:
+              metadata:
+                labels:
+                  type: gpu
+              spec:
+                expireAfter: 470h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default
+                requirements:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - g6e.2xlarge
+                  - key: eks.amazonaws.com/instance-gpu-manufacturer
+                    operator: In
+                    values:
+                      - nvidia
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                taints:
+                  - effect: NoSchedule
+                    key: nvidia.com/gpu
+                    value: "true"
+        # --- Custom NodePool: cpu-general (x86 c8a/c8i with taint) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-general
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "128"
+              memory: 256Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu-x86
+              spec:
+                expireAfter: 472h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default
+                requirements:
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - c8a
+                      - c8i
+                      - c8i-flex
+                      - c7a
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+                taints:
+                  - effect: NoSchedule
+                    key: arch
+                    value: x86_64
+                terminationGracePeriod: 24h0m0s
+        # --- StorageClass (EFS with uid/gid 1000) ---
+        - apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: efs-sc
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+          provisioner: efs.csi.aws.com
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+          parameters:
+            fileSystemId: !Ref EfsFileSystem
+            provisioningMode: efs-ap
+            directoryPerms: "0700"
+            gid: "1000"
+            uid: "1000"
+        # --- ClusterIssuer for Let's Encrypt HTTP-01 ---
+        - apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: letsencrypt-gateway
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: !Sub "admin@${ProjectName}${EnvironmentId}.noreply.example.com"
+              privateKeySecretRef:
+                name: letsencrypt-gateway-account-key
+              solvers:
+                - http01:
+                    gatewayHTTPRoute:
+                      parentRefs:
+                        - name: eg
+                          namespace: envoy-gateway-system
+                          kind: Gateway
+
+  # ============================================================================
+  # SECTION 8: CloudFront Distribution
+  # ============================================================================
+
+  # Lambda to get NLB DNS name from EKS Service
+  NlbLookupFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-nlb-lookup"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 900
+      MemorySize: 256
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import base64,json,logging,tempfile,time,urllib3,boto3
+          from botocore.signers import RequestSigner
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          MAX_REINVOKES=4
+          def get_token(sess,cluster,region):
+            sts=sess.client("sts",region_name=region);si=sts.meta.service_model.service_id
+            sg=RequestSigner(si,region,"sts","v4",sess.get_credentials(),sess.events)
+            p={"method":"GET","url":f"https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15","body":{},"headers":{"x-k8s-aws-id":cluster},"context":{}}
+            u=sg.generate_presigned_url(p,region_name=region,expires_in=60,operation_name="")
+            return "k8s-aws-v1."+base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or {}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            if rt=="Delete":
+              send_cfn(event,ctx,"SUCCESS",pid="nlb-lookup");return
+            try:
+              cn=props["ClusterName"];ns=props["Namespace"]
+              svc_name=props.get("ServiceName","envoy-default-cnf")
+              region=props.get("Region",boto3.session.Session().region_name)
+              sess=boto3.Session(region_name=region)
+              eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+              ep=ci["endpoint"];ca=ci["certificateAuthority"]["data"]
+              tf=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+              tf.write(base64.b64decode(ca));tf.flush();tf.close()
+              http=urllib3.PoolManager(cert_reqs="CERT_REQUIRED",ca_certs=tf.name)
+              token=get_token(sess,cn,region)
+              # Poll for LoadBalancer hostname (NLB can take a few minutes)
+              nlb_dns="";nlb_arn=""
+              for attempt in range(360):
+                if ctx.get_remaining_time_in_millis()<120000:break
+                token=get_token(sess,cn,region)
+                hd={"Authorization":f"Bearer {token}","Accept":"application/json"}
+                # List services in envoy-gateway-system and user namespace to find the envoy service
+                for search_ns in ["envoy-gateway-system",ns]:
+                  r=http.request("GET",f"{ep}/api/v1/namespaces/{search_ns}/services",headers=hd)
+                  if r.status==200:
+                    svcs=json.loads(r.data.decode())
+                    for svc in svcs.get("items",[]):
+                      sn=svc.get("metadata",{}).get("name","")
+                      # Match envoy gateway generated service names
+                      if "envoy" in sn:
+                        ingress=svc.get("status",{}).get("loadBalancer",{}).get("ingress",[])
+                        if ingress:
+                          nlb_dns=ingress[0].get("hostname","")
+                          L.info(f"Found NLB DNS: {nlb_dns} on service {sn} in ns {search_ns}")
+                          break
+                  if nlb_dns:break
+                if nlb_dns:break
+                L.info(f"Waiting for NLB... attempt {attempt+1}")
+                time.sleep(10)
+              if not nlb_dns:
+                # Fallback: read from props passed from K8sInfraResources
+                nlb_dns=props.get("NlbDns","")
+                nlb_arn=props.get("NlbArn","")
+              if not nlb_dns:
+                attempt=event.get("_Attempt",0)
+                if attempt<MAX_REINVOKES:
+                  L.info(f"NLB not found, reinvoking (attempt {attempt+1}/{MAX_REINVOKES})...")
+                  event["_Attempt"]=attempt+1
+                  boto3.client("lambda").invoke(FunctionName=ctx.function_name,InvocationType="Event",Payload=json.dumps(event))
+                  return
+                send_cfn(event,ctx,"FAILED",reason="NLB DNS not available after all retries");return
+              # Get NLB ARN from ELB API using DNS name
+              if not nlb_arn:
+                elb=sess.client("elbv2")
+                nlbs=elb.describe_load_balancers()
+                for lb in nlbs.get("LoadBalancers",[]):
+                  if lb.get("DNSName","")==nlb_dns:
+                    nlb_arn=lb["LoadBalancerArn"];break
+              send_cfn(event,ctx,"SUCCESS",data={"NlbDns":nlb_dns,"NlbArn":nlb_arn},pid="nlb-lookup")
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  NlbLookup:
+    Type: Custom::NlbLookup
+    DependsOn: K8sInfraResources
+    Properties:
+      ServiceToken: !GetAtt NlbLookupFunction.Arn
+      ClusterName: !Ref EksCluster
+      Namespace: !Sub "cnf-${EnvironmentId}"
+      Region: !Ref "AWS::Region"
+      NlbDns: !GetAtt K8sInfraResources.NlbDns
+      NlbArn: !GetAtt K8sInfraResources.NlbArn
+
+  # SPA Cache Policies
+  CachePolicyStaticAssets:
+    Type: AWS::CloudFront::CachePolicy
+    DependsOn: QuotaCheck
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${ProjectName}${EnvironmentId}-static-30d"
+        DefaultTTL: 2592000
+        MaxTTL: 2592000
+        MinTTL: 2592000
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          HeadersConfig:
+            HeaderBehavior: none
+          CookiesConfig:
+            CookieBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  CachePolicyHtml:
+    Type: AWS::CloudFront::CachePolicy
+    DependsOn: QuotaCheck
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${ProjectName}${EnvironmentId}-html-1h"
+        DefaultTTL: 3600
+        MaxTTL: 3600
+        MinTTL: 3600
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          HeadersConfig:
+            HeaderBehavior: none
+          CookiesConfig:
+            CookieBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  ResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    DependsOn: QuotaCheck
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${ProjectName}${EnvironmentId}-security-headers"
+        Comment: "Security headers + remove server"
+        SecurityHeadersConfig:
+          XSSProtection:
+            Override: true
+            Protection: true
+            ModeBlock: true
+          FrameOptions:
+            Override: true
+            FrameOption: SAMEORIGIN
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          ContentTypeOptions:
+            Override: true
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: true
+        RemoveHeadersConfig:
+          Items:
+            - Header: Server
+            - Header: X-Powered-By
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: NlbLookup
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${ProjectName}${EnvironmentId} - HTTP via EnvoyGateway"
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: EnvoyGatewayNLB
+            DomainName: !GetAtt NlbLookup.NlbDns
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginKeepaliveTimeout: 60
+              OriginReadTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-CloudFront-Secret
+                HeaderValue: !Sub "cnf-${EnvironmentId}-${AWS::AccountId}"
+        DefaultCacheBehavior:
+          TargetOriginId: EnvoyGatewayNLB
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: !Ref CachePolicyHtml
+          OriginRequestPolicyId: "216adef6-5c7f-47e4-b989-5492eafa07d3"
+          ResponseHeadersPolicyId: !Ref ResponseHeadersPolicy
+          Compress: true
+        CacheBehaviors:
+          - PathPattern: "/assets/*"
+            TargetOriginId: EnvoyGatewayNLB
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !Ref CachePolicyStaticAssets
+            OriginRequestPolicyId: "bf0718e1-ba1e-49d1-88b1-f726733018ae"
+            ResponseHeadersPolicyId: !Ref ResponseHeadersPolicy
+            Compress: true
+          - PathPattern: "/auth/*"
+            TargetOriginId: EnvoyGatewayNLB
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+            OriginRequestPolicyId: "216adef6-5c7f-47e4-b989-5492eafa07d3"
+            ResponseHeadersPolicyId: !Ref ResponseHeadersPolicy
+            Compress: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-cf"
+
+  # ============================================================================
+  # SECTION 9: GLOBAL ACCELERATOR
+  # ============================================================================
+
+  GlobalAccelerator:
+    Type: AWS::GlobalAccelerator::Accelerator
+    DependsOn: QuotaCheck
+    Properties:
+      Name: !Sub "${ProjectName}${EnvironmentId}"
+      IpAddressType: DUAL_STACK
+      Enabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-ga"
+
+  GAListener443:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 443
+          ToPort: 443
+
+  GAEndpointGroup443:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListener443
+      EndpointGroupRegion: !Ref "AWS::Region"
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
+
+  GAListener80:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 80
+          ToPort: 80
+
+  GAEndpointGroup80:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListener80
+      EndpointGroupRegion: !Ref "AWS::Region"
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
+
+
+  GAListenerExtra1:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 7883
+          ToPort: 7883
+
+  GAEndpointGroupExtra1:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListenerExtra1
+      EndpointGroupRegion: !Ref "AWS::Region"
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 7883
+      HealthCheckIntervalSeconds: 30
+      ThresholdCount: 3
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
+
+  GAListenerExtra2:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 7881
+          ToPort: 7881
+
+  GAEndpointGroupExtra2:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListenerExtra2
+      EndpointGroupRegion: !Ref "AWS::Region"
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 7881
+      HealthCheckIntervalSeconds: 30
+      ThresholdCount: 3
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
+  # ============================================================================
+  # SECTION 10: KUBERNETES APP RESOURCES (Test Pod + Routes + OIDC Policy)
+  # ============================================================================
+
+  EfsCsiPodIdentityAssoc:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: AddonEfsCsi
+    Properties:
+      ClusterName: !Ref EksCluster
+      Namespace: kube-system
+      ServiceAccount: efs-csi-controller-sa
+      RoleArn: !GetAtt EfsCsiRole.Arn
+
+  # Placeholder - maintains dependency chain for GAHttpsSetup
+  K8sAppResources:
+    Type: Custom::K8sApp
+    DependsOn:
+      - K8sInfraResources
+      - NlbLookup
+    Properties:
+      ServiceToken: !GetAtt KubectlFunction.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      Manifests: []
+
+  # Helm-based app deployment
+  HelmDeployFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-helm-deploy"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 600
+      MemorySize: 512
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import base64,json,logging,os,stat,subprocess,tempfile,urllib3,boto3
+          from botocore.signers import RequestSigner
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          HELM_URL="https://get.helm.sh/helm-v3.17.3-linux-amd64.tar.gz"
+          def get_token(sess,cluster,region):
+            sts=sess.client("sts",region_name=region);si=sts.meta.service_model.service_id
+            sg=RequestSigner(si,region,"sts","v4",sess.get_credentials(),sess.events)
+            p={"method":"GET","url":f"https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15","body":{},"headers":{"x-k8s-aws-id":cluster},"context":{}}
+            u=sg.generate_presigned_url(p,region_name=region,expires_in=60,operation_name="")
+            return "k8s-aws-v1."+base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or{}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def install_helm():
+            helm="/tmp/helm"
+            if os.path.exists(helm):return helm
+            http=urllib3.PoolManager()
+            r=http.request("GET",HELM_URL)
+            tgz="/tmp/helm.tar.gz"
+            with open(tgz,"wb") as f:f.write(r.data)
+            import tarfile
+            with tarfile.open(tgz,"r:gz") as t:
+              m=t.getmember("linux-amd64/helm")
+              m.name="helm"
+              t.extract(m,"/tmp")
+            os.chmod(helm,stat.S_IRWXU)
+            return helm
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            if rt=="Delete":
+              try:
+                helm=install_helm()
+                cn=props["ClusterName"];ns=props["Namespace"]
+                region=props.get("Region",boto3.session.Session().region_name)
+                sess=boto3.Session(region_name=region)
+                eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+                ep=ci["endpoint"];ca_data=ci["certificateAuthority"]["data"]
+                ca_file=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+                ca_file.write(base64.b64decode(ca_data));ca_file.flush();ca_file.close()
+                token=get_token(sess,cn,region)
+                kc={"apiVersion":"v1","kind":"Config","clusters":[{"cluster":{"server":ep,"certificate-authority":ca_file.name},"name":"c"}],"contexts":[{"context":{"cluster":"c","user":"u"},"name":"x"}],"current-context":"x","users":[{"name":"u","user":{"token":token}}]}
+                kf=tempfile.NamedTemporaryFile(delete=False,suffix=".yaml",mode="w")
+                json.dump(kc,kf);kf.flush();kf.close()
+                env={**os.environ,"KUBECONFIG":kf.name}
+                r=subprocess.run([helm,"uninstall",props.get("ReleaseName","cnf"),"-n",ns,"--ignore-not-found"],capture_output=True,text=True,env=env)
+                L.info(f"Uninstall: {r.stdout} {r.stderr}")
+              except Exception as e:
+                L.warning(f"Delete cleanup: {e}")
+              send_cfn(event,ctx,"SUCCESS",pid="helm-deploy");return
+            try:
+              cn=props["ClusterName"];ns=props["Namespace"]
+              region=props.get("Region",boto3.session.Session().region_name)
+              sess=boto3.Session(region_name=region)
+              # Get client secret
+              pool_id=props.get("UserPoolId","");client_id=props.get("ClientId","")
+              secret=""
+              if pool_id and client_id:
+                cog=sess.client("cognito-idp")
+                resp=cog.describe_user_pool_client(UserPoolId=pool_id,ClientId=client_id)
+                secret=resp["UserPoolClient"].get("ClientSecret","")
+              # Setup kubeconfig
+              helm=install_helm()
+              eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
+              ep=ci["endpoint"];ca_data=ci["certificateAuthority"]["data"]
+              ca_file=tempfile.NamedTemporaryFile(delete=False,suffix=".crt")
+              ca_file.write(base64.b64decode(ca_data));ca_file.flush();ca_file.close()
+              token=get_token(sess,cn,region)
+              kc={"apiVersion":"v1","kind":"Config","clusters":[{"cluster":{"server":ep,"certificate-authority":ca_file.name},"name":"c"}],"contexts":[{"context":{"cluster":"c","user":"u"},"name":"x"}],"current-context":"x","users":[{"name":"u","user":{"token":token}}]}
+              kf=tempfile.NamedTemporaryFile(delete=False,suffix=".yaml",mode="w")
+              json.dump(kc,kf);kf.flush();kf.close()
+              env={**os.environ,"KUBECONFIG":kf.name,"HELM_CACHE_HOME":"/tmp/helm-cache","HELM_CONFIG_HOME":"/tmp/helm-config","HELM_DATA_HOME":"/tmp/helm-data"}
+              # Build helm command
+              release=props.get("ReleaseName","cnf")
+              chart=props.get("ChartRef","oci://public.ecr.aws/b1y9i2f3/cnf")
+              version=props.get("ChartVersion","0.1.0")
+              cmd=[helm,"upgrade","--install",release,chart,"--version",version,"--namespace",ns,"--create-namespace","--wait","--timeout","10m"]
+              sets=props.get("HelmSets",{})
+              for k,v in sets.items():
+                cmd+=["--set",f"{k}={v}"]
+              # Add auth URI if cognito configured
+              if pool_id and client_id and secret:
+                issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
+                auth_uri=f"oidc://{client_id}:{secret}@{issuer_host}?scope=openid%20profile%20email&oidc_logout=false"
+                cmd+=["--set",f"assistantx.config.auth={auth_uri}"]
+              L.info(f"Running: {' '.join(cmd[:8])}...")
+              r=subprocess.run(cmd,capture_output=True,text=True,env=env,timeout=540)
+              L.info(f"stdout: {r.stdout}")
+              if r.returncode!=0:
+                L.error(f"stderr: {r.stderr}")
+                send_cfn(event,ctx,"FAILED",reason=r.stderr[:256]);return
+              send_cfn(event,ctx,"SUCCESS",data={"Release":release,"Namespace":ns},pid="helm-deploy")
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  HelmDeploy:
+    Type: Custom::HelmDeploy
+    DependsOn:
+      - K8sAppResources
+      - GAHttpsSetup
+      - CognitoOidcSetup
+    Properties:
+      ServiceToken: !GetAtt HelmDeployFunction.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      Namespace: !Sub "assistantx-${EnvironmentId}"
+      ReleaseName: !Sub "assistantx-${EnvironmentId}"
+      ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
+      ChartVersion: "0.1.0"
+      UserPoolId: !Ref CognitoUserPool
+      ClientId: !Ref CognitoUserPoolClient
+      HelmSets:
+        global.gatewayNamespace: envoy-gateway-system
+        global.gateway: eg
+        assistantx.host.frontend: !GetAtt CloudFrontDistribution.DomainName
+        assistantx.host.backend: !GetAtt GlobalAccelerator.DualStackDnsName
+        assistantx.irsaRoleArn: !GetAtt PodRole.Arn
+        assistantx.livekitServer.nodeIp: !Select [0, !GetAtt GlobalAccelerator.Ipv4Addresses]
+        global.httpsListenerName: "https-ga"
+
+  # ============================================================================
+  # SECTION 10.1: GA HTTPS RESOURCES (Certificate + Listener + Route)
+  # ============================================================================
+
+  # When GA is enabled, create Let's Encrypt cert and HTTPS listener for GA hostname
+  GAHttpsSetup:
+    Type: Custom::K8sApp
+    DependsOn:
+      - K8sAppResources
+      - GlobalAccelerator
+    Properties:
+      ServiceToken: !GetAtt KubectlFunction.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      Manifests:
+        # --- Certificate for GA hostname ---
+        - apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: ga-cert
+            namespace: envoy-gateway-system
+          spec:
+            secretName: ga-https-cert
+            issuerRef:
+              name: letsencrypt-gateway
+              kind: ClusterIssuer
+            dnsNames:
+              - !GetAtt GlobalAccelerator.DualStackDnsName
+        # --- Patch Gateway to add https-ga listener ---
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: eg
+            namespace: envoy-gateway-system
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-gateway
+          spec:
+            gatewayClassName: !Sub "cnf-${EnvironmentId}-eg"
+            infrastructure:
+              parametersRef:
+                group: gateway.envoyproxy.io
+                kind: EnvoyProxy
+                name: custom-proxy-config
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: https
+                port: 443
+                protocol: HTTPS
+                hostname: !GetAtt NlbLookup.NlbDns
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: eg-https-cert
+
+              - name: https-7883
+                port: 7883
+                protocol: HTTPS
+                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
+              - name: tcp-7881
+                port: 7881
+                protocol: TCP
+                allowedRoutes:
+                  kinds:
+                    - kind: TCPRoute
+                  namespaces:
+                    from: All
+              - name: https-ga
+                port: 443
+                protocol: HTTPS
+                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
+        # --- ClientTrafficPolicy for HTTP/2 ---
+        - apiVersion: gateway.envoyproxy.io/v1alpha1
+          kind: ClientTrafficPolicy
+          metadata:
+            name: enable-h2
+            namespace: envoy-gateway-system
+          spec:
+            targetRefs:
+            - group: gateway.networking.k8s.io
+              kind: Gateway
+              name: eg
+            connection:
+              connectionLimit:
+                value: 10000
+              maxAcceptPerSocketEvent: 1
+            http1:
+              preserveHeaderCase: true
+            http2:
+              initialConnectionWindowSize: 268435456
+              initialStreamWindowSize: 268435456
+              maxConcurrentStreams: 1000
+            timeout:
+              http:
+                requestReceivedTimeout: 0s
+
+  # ============================================================================
+  # SECTION 11: COGNITO OIDC - SecurityPolicy (EnvoyGateway)
+  # ============================================================================
+
+  # Lambda to update Cognito callback URLs and create JWT SecurityPolicy
+  CognitoSecretFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-setup"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json,logging,urllib3,boto3
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or{}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            rt=event["RequestType"];props=event["ResourceProperties"]
+            if rt=="Delete":
+              send_cfn(event,ctx,"SUCCESS",pid="cognito-setup");return
+            try:
+              region=props.get("Region",boto3.session.Session().region_name)
+              pool_id=props["UserPoolId"];client_id=props["ClientId"]
+              sess=boto3.Session(region_name=region)
+              cog=sess.client("cognito-idp")
+              # Get client secret
+              resp=cog.describe_user_pool_client(UserPoolId=pool_id,ClientId=client_id)
+              secret=resp["UserPoolClient"].get("ClientSecret","")
+              issuer=f"https://cognito-idp.{region}.amazonaws.com/{pool_id}"
+              # Update callback URLs
+              callbacks=[];logouts=[]
+              cf_domain=props.get("CloudFrontDomain","")
+              ga_dns=props.get("GADualStackDns","")
+              if cf_domain:
+                callbacks.append(f"https://{cf_domain}/auth/oidc/callback")
+                logouts.append(f"https://{cf_domain}/auth/oidc/logout")
+              if ga_dns:
+                callbacks.append(f"https://{ga_dns}/auth/oidc/callback")
+                logouts.append(f"https://{ga_dns}/auth/oidc/logout")
+              if not callbacks:
+                callbacks=["https://localhost/auth/oidc/callback"];logouts=["https://localhost/auth/oidc/logout"]
+              L.info(f"Updating Cognito callbacks: {callbacks}")
+              cog.update_user_pool_client(UserPoolId=pool_id,ClientId=client_id,
+                CallbackURLs=callbacks,LogoutURLs=logouts,
+                AllowedOAuthFlows=["code"],AllowedOAuthFlowsUserPoolClient=True,
+                AllowedOAuthScopes=["openid","profile","email"],
+                SupportedIdentityProviders=["COGNITO"],
+                ExplicitAuthFlows=["ALLOW_USER_AUTH","ALLOW_USER_SRP_AUTH","ALLOW_REFRESH_TOKEN_AUTH"])
+              send_cfn(event,ctx,"SUCCESS",data={"CognitoIssuer":issuer,"ClientSecret":secret},pid="cognito-setup")
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  CognitoOidcSetup:
+    Type: Custom::CognitoSetup
+    DependsOn:
+      - K8sAppResources
+      - CognitoUserPoolClient
+    Properties:
+      ServiceToken: !GetAtt CognitoSecretFunction.Arn
+      Region: !Ref "AWS::Region"
+      UserPoolId: !Ref CognitoUserPool
+      ClientId: !Ref CognitoUserPoolClient
+      CloudFrontDomain: !GetAtt CloudFrontDistribution.DomainName
+      GADualStackDns: !GetAtt GlobalAccelerator.DualStackDnsName
+
+# ==============================================================================
+# OUTPUTS
+# ==============================================================================
+Outputs:
+  StackName:
+    Description: "Stack Name"
+    Value: !Sub "${ProjectName}${EnvironmentId}"
+
+  VpcId:
+    Description: "VPC ID"
+    Value: !Ref VPC
+
+  EksClusterName:
+    Description: "EKS Cluster Name"
+    Value: !Ref EksCluster
+
+  EksClusterEndpoint:
+    Description: "EKS Cluster API Endpoint"
+    Value: !GetAtt EksCluster.Endpoint
+
+  EfsFileSystemId:
+    Description: "EFS File System ID"
+    Value: !Ref EfsFileSystem
+
+  CognitoUserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref CognitoUserPool
+
+  CognitoUserPoolClientId:
+    Description: "Cognito App Client ID"
+    Value: !Ref CognitoUserPoolClient
+
+  CognitoUserPoolClientSecret:
+    Description: "Cognito App Client Secret"
+    Value: !GetAtt CognitoOidcSetup.ClientSecret
+
+  CognitoAdminUsername:
+    Description: "Cognito Admin Username"
+    Value: !GetAtt CognitoAdminUser.Username
+
+  CognitoAdminPassword:
+    Description: "Cognito Admin Password (SAVE THIS - shown only once)"
+    Value: !GetAtt CognitoAdminUser.Password
+
+  CognitoOidcIssuer:
+    Description: "Cognito OIDC Issuer URL"
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+
+  PodRoleArn:
+    Description: "Pod IAM Role ARN (IRSA/Pod Identity)"
+    Value: !GetAtt PodRole.Arn
+
+  NlbDns:
+    Description: "EnvoyGateway NLB DNS Name"
+    Value: !GetAtt NlbLookup.NlbDns
+
+  CloudFrontDomain:
+    Description: "CloudFront Domain Name (frontend host)"
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  GlobalAcceleratorHost:
+    Description: "Global Accelerator Dual-Stack DNS (backend host)"
+    Value: !GetAtt GlobalAccelerator.DualStackDnsName
