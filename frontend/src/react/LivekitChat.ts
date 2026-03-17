@@ -199,6 +199,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
     return () => clearTimeout(t);
   }, [msgs]);
 
+
   const handleSend = useCallback(async () => {
     if (!inputText.trim()) return;
     const text = inputText.trim();
@@ -206,6 +207,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
     try { await chat.send(text); } catch (e) { console.error('[LivekitChat] Send failed:', e); }
     inputRef.current?.focus();
   }, [inputText, chat]);
+
 
   const toggleMic = useCallback(async () => {
     try { await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled); } catch {}
