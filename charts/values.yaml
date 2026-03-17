@@ -1,6 +1,10 @@
 global:
   gateway: eg
   gatewayNamespace: aws300
+  # httpsListenerName: when set, restricts backend HTTPRoute to this specific
+  # Gateway listener (prevents it from matching other HTTPS ports like :7883).
+  # Set to your HTTPS listener name, e.g. "https-wildcard" or "https".
+  httpsListenerName: "https-wildcard"
 
 assistantx:
   enabled: true

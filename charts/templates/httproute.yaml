@@ -6,7 +6,7 @@ spec:
   parentRefs:
     - name: {{ $.Values.global.gateway }}
       namespace: {{ $.Values.global.gatewayNamespace }}
-      sectionName: https-wildcard
+
   hostnames:
     - {{ $.Values.assistantx.host.frontend | quote }}
   rules:
@@ -44,7 +44,9 @@ spec:
   parentRefs:
     - name: {{ $.Values.global.gateway }}
       namespace: {{ $.Values.global.gatewayNamespace }}
-      sectionName: https-wildcard
+      {{- if $.Values.global.httpsListenerName }}
+      sectionName: {{ $.Values.global.httpsListenerName }}
+      {{- end }}
   hostnames:
     - {{ if $.Values.assistantx.host.backend }}{{ $.Values.assistantx.host.backend | quote }}{{ else }}{{ $.Values.assistantx.host.frontend | quote }}{{ end }}
   rules:
