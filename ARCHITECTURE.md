@@ -2,46 +2,46 @@
 
 ## Core Principle: Proto-First, gRPC Everywhere
 
-> **All service interfaces in this project must be defined as Protocol Buffer services and exposed via gRPC / ConnectRPC. No REST endpoints, no ad-hoc JSON APIs.**
+> **All service interfaces must be defined as Protocol Buffer services and exposed via gRPC / ConnectRPC. No ad-hoc REST endpoints or raw JSON APIs.**
 
-Every new capability — whether it lives in the Go backend, the Python ai-agent, or any future service — follows the same lifecycle:
+Every new capability follows the same lifecycle:
 
 ```
-1. Define the contract in protos/
-2. Generate stubs  (make gen / make gen-python)
-3. Implement the service
-4. Register it on the server
+1. Define in protos/           (.proto file)
+2. Generate stubs              (make gen / make gen-python)
+3. Implement the handler       (backend/ or agent/)
+4. Register on the server
 ```
 
-This ensures that every interface is:
-- **Strongly typed** — request and response shapes are enforced by the compiler
-- **Language-agnostic** — Go, Python, and TypeScript clients all share the same generated types
-- **Self-documenting** — the `.proto` file is the definitive API contract
-- **HTTP/2 native** — gRPC runs over HTTP/2; ConnectRPC additionally supports HTTP/1.1 and browser clients without a proxy
+This ensures every interface is strongly typed, language-agnostic, and self-documenting.
 
 ---
 
 ## System Topology
 
 ```
-                          ┌─────────────────────────────────────────┐
-                          │  Kubernetes (EKS)  ns: assistantx        │
-                          │                                           │
-Browser ──HTTPS──► Envoy  │  ┌────────────┐    ┌─────────────────┐  │
-                  Gateway │  │  Frontend  │    │    Backend      │  │
-                  (eg)    │  │  SolidJS   │    │  Go  │  Python  │  │
-                          │  │  nginx     │    │      │ ai-agent │  │
-                          │  │  :80       │    │  :8080  │ :8080  │  │
-                          │  └────────────┘    │         │ :8081  │  │
-                          │                    └─────────────────┘  │
-                          └─────────────────────────────────────────┘
+                        ┌────────────────────────────────────────────┐
+                        │  Kubernetes (EKS)  ns: assistantx           │
+                        │                                              │
+Browser ──HTTPS──► Envoy│  ┌─────────────┐   ┌───────────────────┐  │
+                  Gateway  │  Frontend   │   │  Backend (Go)     │  │
+                  (eg)   │  │  SolidJS   │   │  ConnectRPC :8080 │  │
+                        │  │  nginx :80  │   │  gRPC      :8081  │  │
+                        │  └─────────────┘   └───────────────────┘  │
+                        │                                              │
+                        │  ┌──────────────────────────────────────┐  │
+                        │  │  Agent (Python)                       │  │
+                        │  │  LiveKit voice agent (Nova Sonic S2S) │  │
+                        │  └──────────────────────────────────────┘  │
+                        └────────────────────────────────────────────┘
 
 Routing (Envoy HTTPRoute):
-  assistantx.nx.run       →  assistantx-frontend :80
-  assistantxapi.nx.run    →  assistantx-backend  :8080
-```
+  assistantx.nx.run      →  assistantx-frontend :80
+  assistantxapi.nx.run   →  assistantx-backend  :8080
 
-**Backend is a single Deployment** — at any time it runs either the Go image or the Python ai-agent image, controlled by `assistantx.backendLang` in Helm values. Both images expose identical proto-defined APIs on the same ports.
+LiveKit:
+  wss://livekit.nx.run   ←→  Agent ←→ Frontend (WebRTC)
+```
 
 ---
 
@@ -50,245 +50,213 @@ Routing (Envoy HTTPRoute):
 ```
 protos/
 ├── auth/v1/auth.proto        # auth.v1.AuthService
-├── buf.yaml                  # buf lint + breaking-change config
+├── livekit/v1/livekit.proto  # livekit.v1.LivekitService
+├── irsa/v1/irsa.proto        # irsa.v1.IRSAService
+├── buf.yaml
 ├── buf.gen.yaml              # Go + TypeScript stub generation
-├── buf.gen.python.yaml       # Python stub generation (ai-agent)
+├── buf.gen.python.yaml       # Python stub generation (agent)
 └── Makefile
     ├── make gen              # → backend/pkg/pb/  + frontend/src/gen/
-    └── make gen-python       # → ai-agent/src/authspa/generated/
+    └── make gen-python       # → agent/src/generated/
 ```
 
 ### Adding a New Service
 
 1. Create `protos/<package>/v<N>/<package>.proto`
-2. Define `service`, `message` types
-3. Run `make gen` (and `make gen-python` if the ai-agent implements it)
-4. Implement the server-side handler in `backend/` and/or `ai-agent/`
-5. Register the handler on the gRPC/Connect server
-
-**Never** add an HTTP handler, REST route, or WebSocket endpoint outside of protobuf.
+2. Run `make gen` (and `make gen-python` if the agent implements it)
+3. Implement the handler in `backend/` and/or `agent/`
+4. Register on the server
 
 ---
 
 ## 2. Go Backend — `backend/`
 
-The Go backend is the production-grade implementation. It uses
-[common-go/grpcmux](https://github.com/ti/common-go) which wraps ConnectRPC to serve
-both the **Connect protocol** (browser-compatible, HTTP/1.1 + HTTP/2) and native **gRPC**
-(HTTP/2) on the same port.
+The Go backend uses [common-go/grpcmux](https://github.com/ti/common-go) to serve both the Connect protocol (browser-compatible HTTP/1.1 + HTTP/2) and native gRPC on the same port.
 
 ```
 backend/
 ├── cmd/server/main.go               # Entry point
-├── configs/config.yaml              # Default config (auth DSN injected by Helm)
+├── configs/config.yaml              # Config (injected by Helm ConfigMap)
 ├── Dockerfile
-├── go.mod                           # module github.com/assistantx/backend
 ├── internal/
 │   ├── dependencies/
-│   │   ├── dependencies.go          # Wires all external deps (OIDC provider)
-│   │   └── oidc/oidc.go             # OIDC: discovery, JWKS cache, JWT validation
+│   │   ├── dependencies.go          # OIDC provider wiring
+│   │   └── oidc/oidc.go             # JWKS cache, JWT validation
 │   └── server/
-│       ├── auth_middleware.go       # NewAuthFunc — JWT validation interceptor
-│       └── auth_service.go          # auth.v1.AuthService implementation
-└── pkg/pb/                          # Generated stubs (do not edit manually)
-    └── auth/v1/
-        ├── auth.pb.go               # protoc-gen-go
-        └── authv1connect/auth.connect.go  # protoc-gen-connect-go
+│       ├── auth_middleware.go       # JWT validation interceptor
+│       ├── auth_service.go          # auth.v1.AuthService
+│       └── livekit_service.go       # livekit.v1.LivekitService (token + skills)
+└── pkg/pb/                          # Generated stubs (do not edit)
 ```
 
-### Server Startup (`cmd/server/main.go`)
+### Services
 
-```go
-gs := grpcmux.NewServer(
-    grpcmux.WithAuthFunc(server.NewAuthFunc(...)),   // central JWT check
-    grpcmux.WithNoAuthPrefixes("/healthz",
-        "/auth.v1.AuthService/Authorize", ...),
-)
-server.RegisterAuthService(gs, cfg.Dependencies.Auth)
-gs.Start()  // binds :8080 (Connect+gRPC), :8081 (gRPC native), :9090 (metrics)
+| Service | Description |
+|---|---|
+| `auth.v1.AuthService` | PKCE auth flow, token exchange, user info |
+| `livekit.v1.LivekitService` | LiveKit room token, agent dispatch, skill YAML |
+| `irsa.v1.IRSAService` | AWS IRSA credential info |
+
+### Auth Architecture
+
+```
+Request → grpcmux.WithAuthFunc(NewAuthFunc)
+            ├── NoAuthPrefixes? → pass through
+            └── validate Bearer (offline JWKS)
+                  ├── valid  → handler
+                  └── invalid → UNAUTHENTICATED
 ```
 
 ### Adding a New Service (Go)
 
 ```go
-// 1. internal/server/my_service.go
+// 1. backend/internal/server/my_service.go
 type MyServer struct { myv1connect.UnimplementedMyServiceHandler }
-func (s *MyServer) MyMethod(ctx context.Context, req *connect.Request[myv1.MyRequest]) (*connect.Response[myv1.MyResponse], error) { ... }
 
-// 2. Register in cmd/server/main.go
+// 2. cmd/server/main.go
 server.RegisterMyService(gs, deps)
 ```
 
-### Auth Architecture
-
-```
-Request
-  │
-  ▼
-grpcmux.WithAuthFunc(NewAuthFunc(provider))
-  │
-  ├─ path in NoAuthPrefixes? ──► pass through
-  │
-  └─ validate Bearer token (offline JWKS)
-       ├─ valid  ──► handler
-       └─ invalid ─► UNAUTHENTICATED
-```
-
-`NewAuthFunc` performs **offline JWT validation** — it verifies the RS256 signature against the JWKS cache (fetched once at startup, refreshed on unknown `kid` using `singleflight` to avoid thundering herd).
-
 ---
 
-## 3. Python AI-Agent — `ai-agent/`
+## 3. Python Agent — `agent/`
 
-The Python ai-agent is a dual-protocol server built on
-[connect-python](https://github.com/connectrpc/connect-python) (ASGI, Connect + gRPC protocols)
-and [grpc.aio](https://grpc.github.io/grpc/python/) (native gRPC). It implements the same
-`auth.v1.AuthService` interface as the Go backend and is designed to be extended with
-AI-specific services (LLM calls, vector search, agent orchestration).
+A LiveKit voice agent using Nova Sonic speech-to-speech (realtime mode). On each session it loads device skill YAML, generates function tools, and dispatches actions to the frontend via RPC.
 
 ```
-ai-agent/
-├── Dockerfile                       # Proto stubs generated inside Docker (Stage 1)
-├── pyproject.toml                   # name: ai-agent, entry: ai-agent = authspa.server.main:run
+agent/
+├── Dockerfile
+├── pyproject.toml               # entry: agent = lkagent.run:main
 ├── requirements.txt
-├── configs/config.yaml              # Default config skeleton (no auth DSN)
-└── src/
-    ├── auth/                        # Import bridge: auth.v1 → authspa/generated/auth/v1/
-    │   └── v1/__init__.py
-    └── authspa/
-        ├── config/                  # Pydantic Settings (apis.httpAddr, dependencies.auth)
-        ├── logging.py               # structlog JSON logger
-        ├── oidc/                    # OIDCProvider: discovery, JWKS cache, JWT validation
-        ├── services/
-        │   └── auth_service.py      # auth.v1.AuthService (Connect + gRPC methods)
-        ├── server/
-        │   └── main.py              # Bootstrap: dual-protocol server, auth interceptors
-        └── generated/               # Generated stubs (grpcio-tools, gitignored)
-            └── auth/v1/
-                ├── auth_pb2.py
-                └── auth_pb2_grpc.py
+├── configs/config.yaml          # Config (overridden by Helm ConfigMap)
+├── skills/devices/              # Device skill YAML (vehicle / home / charger)
+└── src/lkagent/
+    ├── agent.py                 # Session entrypoint, RealtimeVoiceAgent, LLMAgent
+    ├── skills/
+    │   ├── skill_loader.py      # Loads YAML skill definitions
+    │   ├── tool_generator.py    # Generates LiveKit function tools from skills
+    │   └── action_dispatcher.py # RPC dispatch to frontend (executeAction)
+    └── rag/
+        └── knowledge_base.py    # AWS Bedrock knowledge base tool
 ```
 
-### Dual-Protocol Server
-
-The ai-agent serves **two ports simultaneously**:
-
-| Port | Protocol | Library | Use case |
-|---|---|---|---|
-| `8080` | Connect (HTTP/1.1 + HTTP/2) + gRPC | Hypercorn + connect-python | Frontend, browser clients |
-| `8081` | gRPC (HTTP/2) | grpc.aio | Server-to-server, native gRPC clients |
-
-Both ports enforce the same auth interceptor logic.
-
-### Proto Import Bridge
-
-Generated stubs are placed in `src/authspa/generated/auth/v1/`. The file
-`src/auth/v1/__init__.py` extends `__path__` so that `from auth.v1 import auth_pb2` resolves
-correctly (matching the proto package declaration `package auth.v1`).
-
-### Adding a New Service (Python)
-
-```python
-# 1. ai-agent/src/authspa/services/my_service.py
-from my_pkg.v1 import my_pb2, my_pb2_grpc
-
-class MyService(my_pb2_grpc.MyServiceServicer):
-    async def my_method(self, request, ctx):     # Connect (snake_case)
-        ...
-    async def MyMethod(self, request, context):  # gRPC (PascalCase)
-        ...
-
-# 2. Register in server/main.py — _build_connect_app() and _serve_grpc()
-```
-
-```python
-# In _build_connect_app():
-"/my_pkg.v1.MyService/MyMethod": Endpoint.unary(
-    method=_m("MyMethod", "my_pkg.v1.MyService", my_pb2.MyRequest, my_pb2.MyResponse),
-    function=my_svc.my_method,
-),
-
-# In _serve_grpc():
-my_pb2_grpc.add_MyServiceServicer_to_server(my_svc, server)
-```
-
-### Auth Architecture (Python)
+### Session Flow
 
 ```
-Connect request
-  │
-  ▼
-_AuthInterceptor.intercept_unary()
-  │
-  ├─ method in _NO_AUTH_CONNECT? ──► pass through
-  │
-  └─ validate Bearer token (OIDCProvider.validate_token)
-       │  offline: JWKS in-memory cache
-       │  cold path: single JWKS refresh (asyncio.Task deduplicated)
-       ├─ valid  ──► handler
-       └─ invalid ─► ConnectError(UNAUTHENTICATED)
+LiveKit dispatch (scene metadata)
+  └── entrypoint(ctx)
+        ├── load_skills_and_tools(scene)   # YAML → function tools
+        ├── create_realtime_session()      # Nova Sonic RealtimeModel
+        ├── RealtimeVoiceAgent(tools)      # Agent with S2S + tool calling
+        ├── setup_data_listener(room)      # Text input handler
+        └── session.start()
+              │
+              User speaks / types
+              │
+              Nova Sonic processes → calls tool (session_exit, hvac.setTemp, …)
+              │
+              ActionDispatcher.dispatch(action)
+              │
+              RPC executeAction → Frontend
+              │
+              Frontend ActionExecutor → state update
+```
 
-gRPC request
-  │
-  ▼
-_GRPCAuthInterceptor (grpc.aio.ServerInterceptor)
-  └─ same logic via grpc.StatusCode.UNAUTHENTICATED
+### Skill YAML Format
+
+```yaml
+# skills/devices/vehicle.yaml
+skills:
+  - id: hvac.setTemperature
+    name: "设置空调温度"
+    description: "..."
+    triggers: ["调高温度", "空调设为25度"]
+    parameters:
+      - name: temperature
+        type: integer
+        min: 16
+        max: 30
+    action:
+      id: hvac.setTemperature
+      payload_template: { temperature: "${temperature}" }
+    responses:
+      success: "已将空调温度设置为${temperature}度"
+
+  - id: session.exit
+    category: session
+    name: "退出会话"
+    description: "结束当前语音会话"
+    triggers: ["再见", "退出", "关闭", "退下"]
+    parameters: []
+    action:
+      id: session.disconnect
+      payload_template: {}
+    responses:
+      success: "好的，再见"
 ```
 
 ---
 
 ## 4. Frontend — `frontend/`
 
-The frontend is a **SolidJS** SPA. It communicates with the backend **exclusively via
-ConnectRPC** — there are no direct REST or fetch calls to the API.
+SolidJS SPA with Tailwind CSS v4. Communicates with the backend via ConnectRPC and with the LiveKit agent via WebRTC. The voice chat panel is a React micro-island using `@livekit/components-react`.
 
 ```
-frontend/
-├── src/
-│   ├── api/
-│   │   └── client.ts            # createConnectTransport + authClient
-│   ├── gen/                     # Generated TypeScript stubs (buf → protoc-gen-es)
-│   │   └── auth/v1/
-│   │       ├── auth_pb.ts       # Message types
-│   │       └── auth_connect.ts  # ServiceClient
-│   ├── stores/
-│   │   └── auth.ts              # Auth state: credentials, PKCE flow, token refresh
-│   ├── config.ts                # Runtime config: backendUrl, connectProtocol
-│   └── pages/
-│       ├── Home.tsx
-│       ├── AuthCallback.tsx     # Handles /auth/oidc/callback
-│       └── AuthLogoutCallback.tsx
-└── Dockerfile                   # Vite build → nginx
+frontend/src/
+├── api/client.ts            # ConnectRPC transport + clients
+├── gen/                     # Generated stubs (buf)
+├── pages/
+│   ├── Landing.tsx          # Scene selector
+│   ├── Cockpit.tsx          # Vehicle controls (car scene)
+│   ├── SmartHome.tsx        # Home controls (home scene)
+│   └── Charger.tsx          # EV charger controls (charger scene)
+├── react/
+│   └── LivekitChat.ts       # React micro-island (useChat, RoomAudioRenderer, BarVisualizer)
+├── components/
+│   └── ChatPanelBridge.tsx  # SolidJS wrapper that mounts the React chat panel
+├── skills/
+│   └── ActionExecutor.ts    # RPC handler + 40+ device action handlers
+└── stores/
+    ├── vehicleStore.ts
+    ├── homeStore.ts
+    └── chargerStore.ts
 ```
 
 ### ConnectRPC Client
 
 ```typescript
-// src/api/client.ts
 const transport = createConnectTransport({
     baseUrl: BACKEND_URL || window.location.origin,
-    // Sends: Content-Type: application/connect+proto
-    // Works over HTTP/1.1 and HTTP/2 without a grpc-web proxy
+    useBinaryFormat: CONNECT_PROTOCOL !== 'json',
 });
-
-export const authClient = createClient(AuthService, transport);
+export const authClient   = createClient(AuthService,    transport);
+export const livekitClient = createClient(LivekitService, transport);
 ```
 
-`BACKEND_URL` is injected at runtime by the nginx container entrypoint as
-`window.__CONFIG__.backendUrl`. When empty, all API calls use relative paths
-(same-origin, path-based routing).
+### Chat Panel Architecture
 
-### Adding a New Service (Frontend)
+The voice chat panel is a **React micro-island** mounted inside the SolidJS page. This approach uses `@livekit/components-react` hooks for proper turn-taking and audio management:
 
-```typescript
-// After running `make gen`:
-import { createClient } from "@connectrpc/connect";
-import { MyService } from "@/gen/my_pkg/v1/my_pb_connect";
+```
+SolidJS Page
+  └── ChatPanelBridge.tsx  (SolidJS)
+        └── mountLivekitChat(container)
+              └── LivekitChat.ts  (React)
+                    ├── RoomContext.Provider
+                    ├── RoomAudioRenderer    ← automatic audio management
+                    ├── useChat().send()     ← proper turn-taking / interruption
+                    ├── useVoiceAssistant()  ← agent state (listening/thinking/speaking)
+                    ├── useTranscriptions()  ← voice transcript display
+                    └── BarVisualizer        ← speaking animation
+```
 
-export const myClient = createClient(MyService, transport);
+### Action Execution Flow
 
-// Usage:
-const response = await myClient.myMethod({ field: "value" });
+```
+Agent calls executeAction RPC
+  └── r.registerRpcMethod('executeAction')
+        └── ActionExecutor.executeAction({ id, params })
+              └── handler(params) → store mutation → UI update
 ```
 
 ---
@@ -298,79 +266,65 @@ const response = await myClient.myMethod({ field: "value" });
 ```
 charts/
 ├── Chart.yaml
-├── values.yaml                  # Default values — assistantx.*
-├── values.schema.json           # Validated by Helm
+├── values.yaml              # assistantx.* configuration
+├── values.schema.json       # Schema validation
 └── templates/
-    ├── backend.yaml             # ConfigMap + Service + Deployment
-    ├── frontend.yaml            # Service + Deployment (nginx)
-    ├── httproute.yaml           # Envoy HTTPRoute (frontend + backend)
-    └── serviceaccount.yaml      # IRSA ServiceAccount (when irsaRoleArn set)
-```
-
-### Backend Switching
-
-The single `assistantx-backend` Deployment runs either the Go image or the Python
-ai-agent image — not both simultaneously.
-
-```yaml
-# values.yaml
-assistantx:
-  backendLang: go        # "go" → image.backend / "python" → image.aiAgent
-  image:
-    backend:  public.ecr.aws/b1y9i2f3/assistantx:backend
-    aiAgent:  public.ecr.aws/b1y9i2f3/assistantx:ai-agent
-```
-
-```bash
-# Switch to Go:
-helm upgrade assistantx charts/ --set assistantx.backendLang=go
-
-# Switch to Python ai-agent:
-./scripts/deploy.sh ai-agent
+    ├── backend.yaml         # ConfigMap + Service + Deployment (Go)
+    ├── agent.yaml           # ConfigMap + Service + Deployment (Python)
+    ├── frontend.yaml        # Service + Deployment (nginx)
+    ├── httproute.yaml       # Envoy HTTPRoute
+    └── serviceaccount.yaml  # IRSA ServiceAccount
 ```
 
 ### Config Injection
 
-The Helm ConfigMap injects the OIDC DSN and server addresses into the pod at
-`/app/configs/config.yaml`. The Go backend reads it via `common-go/config.Init`;
-the Python ai-agent reads it via `authspa.config.load_config()`.
+The Helm chart injects two ConfigMaps:
 
+**Backend** (`assistantx-backend-config`):
 ```yaml
-# Injected config (same format for both backends)
 dependencies:
   auth: "oidc://..."
-apis:
-  httpAddr: ":8080"
-  grpcAddr: ":8081"
-  metricsAddr: ":9090"
+livekit:
+  url: "wss://livekit.nx.run"
+  apiKey: "..."
+  agentName: "AssistantX"
+  skillsDir: "/app/skills/devices"
+```
+
+**Agent** (`assistantx-agent-config`):
+```yaml
+livekit:
+  url: "wss://livekit.nx.run"
+  api_key: "..."
+agent:
+  name: "AssistantX"
+voice_mode: "realtime"
+nova_sonic:
+  model_version: "nova-sonic-2"
+llm:
+  provider: "bedrock"
+  region: "us-west-2"
 ```
 
 ---
 
 ## 6. Deployment Pipeline — `scripts/deploy.sh`
 
-```
-./scripts/deploy.sh backend     # build Go image → push → restart pod
-./scripts/deploy.sh ai-agent    # build Python image → push → helm upgrade (backendLang=python)
-./scripts/deploy.sh frontend    # build nginx image → push → restart pod
-./scripts/deploy.sh helm        # helm upgrade only (no image build)
-./scripts/deploy.sh all         # build all → helm upgrade
+```bash
+./scripts/deploy.sh backend    # build Go image → push → restart pod
+./scripts/deploy.sh agent      # build Python image → push → helm upgrade
+./scripts/deploy.sh frontend   # build nginx image → push → restart pod
+./scripts/deploy.sh helm       # helm upgrade only (no image build)
+./scripts/deploy.sh all        # build all → push chart → helm upgrade
 ```
 
 ---
 
 ## Interface Contract Rules
 
-The following rules apply to all contributors:
-
-1. **Proto first.** Define the API in a `.proto` file before writing any implementation code.
-
-2. **No HTTP handlers outside proto.** Do not add `http.HandleFunc`, FastAPI routes, Express routes, or any other HTTP handler that is not backed by a proto service definition.
-
-3. **Package naming.** Proto packages follow `<domain>.v<N>` (e.g. `auth.v1`, `agent.v1`). The first stable version is always `v1`. Breaking changes require a new version (`v2`).
-
-4. **Backward compatibility.** Never remove or rename fields in existing messages. Add new fields with new field numbers. Use `reserved` to retire old numbers.
-
-5. **Auth is handled centrally.** Do not implement per-handler authentication. Register new services on the existing grpcmux/Connect server and they automatically inherit the auth interceptor.
-
-6. **Error codes.** Use gRPC status codes (`UNAUTHENTICATED`, `PERMISSION_DENIED`, `NOT_FOUND`, etc.) — not HTTP status codes. ConnectRPC maps them to HTTP automatically.
+1. **Proto first.** Define the API in `.proto` before writing any implementation.
+2. **No HTTP handlers outside proto.** No raw `http.HandleFunc`, FastAPI routes, etc.
+3. **Package naming.** `<domain>.v<N>` (e.g. `auth.v1`, `livekit.v1`). Breaking changes → new version.
+4. **Backward compatibility.** Never remove or rename fields. Use `reserved` to retire field numbers.
+5. **Auth is central.** New services inherit the auth interceptor automatically — no per-handler auth.
+6. **Error codes.** Use gRPC status codes (`UNAUTHENTICATED`, `NOT_FOUND`, etc.).

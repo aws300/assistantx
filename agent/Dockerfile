@@ -1,8 +1,8 @@
-# Build context: ai-agent/
-# Build command:  cd ai-agent && docker build -t <image> .
+# Build context: agent/
+# Build command:  cd agent && docker build -t <image> .
 
 # ── Stage 1: install Python dependencies + application ───────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ \
@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from livekit.plugins import silero; silero.VAD.load()"
 
 COPY pyproject.toml ./
-RUN echo "# ai-agent" > README.md
+RUN echo "# agent" > README.md
 
 COPY src/ ./src/
 
@@ -31,7 +31,7 @@ COPY configs/ ./configs/
 RUN pip install --no-cache-dir .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -65,4 +65,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8080
 
-CMD ["ai-agent", "start"]
+CMD ["agent", "start"]

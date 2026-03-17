@@ -135,14 +135,10 @@ const Landing: Component = () => {
                   return (
                     <button
                       class={cn(
-                        'rounded-full transition-opacity duration-150',
+                        'w-4 h-4 rounded-full transition-opacity duration-150',
                         isSelected() ? 'opacity-100' : 'opacity-40 hover:opacity-70'
                       )}
-                      style={{
-                        width: '16px',
-                        height: '16px',
-                        'background-color': config.primary,
-                      }}
+                      style={{ 'background-color': config.primary }}
                       onClick={() => themeStore.setTheme(themeId)}
                       aria-label={themeId}
                     />

@@ -5,8 +5,9 @@
  * Leverages official @livekit/components-react hooks for proper turn-taking,
  * audio management, and text chat interruption.
  *
- * Design: Apple glass morphism with Material Symbols icons.
- * Animations: LiveKit BarVisualizer for speaking, custom pulse/dots for other states.
+ * Styling: Tailwind CSS classes (scanned by Tailwind v4 from .ts files).
+ * Icons: Material Symbols Outlined via className.
+ * Animations: LiveKit BarVisualizer + custom CSS keyframes.
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -56,98 +57,71 @@ interface MountOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Material Icon helper
+// Material Icon helper (Tailwind className based)
 // ---------------------------------------------------------------------------
 
-function icon(name: string, size = 20, extra?: React.CSSProperties) {
-  return h('span', {
-    className: 'material-symbols-outlined',
-    style: { fontSize: `${size}px`, lineHeight: 1, ...extra },
-  }, name);
-}
-
-function iconFilled(name: string, size = 20, extra?: React.CSSProperties) {
-  return h('span', {
-    className: 'material-symbols-outlined',
-    style: {
-      fontSize: `${size}px`, lineHeight: 1,
-      fontVariationSettings: '"FILL" 1',
-      ...extra,
-    },
-  }, name);
+function micon(name: string, cls = '') {
+  return h('span', { className: `material-symbols-outlined select-none leading-none ${cls}`.trim() }, name);
 }
 
 // ---------------------------------------------------------------------------
-// Inject panel-specific CSS (animations, scrollbar, etc.)
+// Inject panel-specific keyframe CSS
 // ---------------------------------------------------------------------------
 
 const PANEL_CSS = `
-@keyframes lk-chat-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.8); opacity: 0; }
-}
-@keyframes lk-chat-dot-bounce {
-  0%, 80%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-6px); }
-}
-@keyframes lk-chat-fade-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.lk-chat-panel-messages::-webkit-scrollbar { width: 4px; }
-.lk-chat-panel-messages::-webkit-scrollbar-track { background: transparent; }
-.lk-chat-panel-messages::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.08); border-radius: 4px;
-}
-.lk-chat-panel-messages::-webkit-scrollbar-thumb:hover {
-  background: rgba(0,0,0,0.15);
-}
-.lk-chat-msg-enter {
-  animation: lk-chat-fade-in 0.25s ease-out;
-}
+@keyframes lk-chat-pulse{0%,100%{transform:scale(1);opacity:.6}50%{transform:scale(1.8);opacity:0}}
+@keyframes lk-chat-dots{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+@keyframes lk-chat-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes lk-spin{to{transform:rotate(360deg)}}
+.lk-chat-msgs::-webkit-scrollbar{width:4px}
+.lk-chat-msgs::-webkit-scrollbar-track{background:transparent}
+.lk-chat-msgs::-webkit-scrollbar-thumb{background:rgba(0,0,0,.08);border-radius:4px}
+.lk-msg-in{animation:lk-chat-fade .25s ease-out}
+.lk-spin{animation:lk-spin 1.2s linear infinite}
+.lk-dot{animation:lk-chat-dots 1.2s ease-in-out infinite}
+.lk-pulse{animation:lk-chat-pulse 2s ease-in-out infinite}
 `;
 
 let cssInjected = false;
 function injectCSS() {
   if (cssInjected) return;
   cssInjected = true;
-  const style = document.createElement('style');
-  style.textContent = PANEL_CSS;
-  document.head.appendChild(style);
+  const s = document.createElement('style');
+  s.textContent = PANEL_CSS;
+  document.head.appendChild(s);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-interface DisplayMessage {
+interface Msg {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
 }
 
-function transcriptionToDisplay(
+function toMsg(
   t: { text: string; streamInfo: { id: string; timestamp: number }; participantInfo: { identity: string } },
   room: Room,
-): DisplayMessage {
-  const isLocal = t.participantInfo.identity === room.localParticipant.identity;
+): Msg {
   return {
     id: t.streamInfo.id,
-    role: isLocal ? 'user' : 'assistant',
+    role: t.participantInfo.identity === room.localParticipant.identity ? 'user' : 'assistant',
     content: t.text,
     timestamp: t.streamInfo.timestamp,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Agent Status Indicator (listening/thinking/speaking animations)
+// AgentStatusBar
 // ---------------------------------------------------------------------------
 
-function AgentStatusIndicator({ state, audioTrack }: { state: string; audioTrack?: any }) {
+function AgentStatusBar({ state, audioTrack }: { state: string; audioTrack?: any }) {
   if (!state || state === 'idle' || state === 'disconnected') return null;
 
-  const labelMap: Record<string, string> = {
+  const labels: Record<string, string> = {
     listening: '\u6b63\u5728\u8046\u542c',
     thinking: '\u601d\u8003\u4e2d',
     speaking: '\u56de\u590d\u4e2d',
@@ -155,453 +129,208 @@ function AgentStatusIndicator({ state, audioTrack }: { state: string; audioTrack
     initializing: '\u521d\u59cb\u5316',
   };
 
-  const colorMap: Record<string, string> = {
-    listening: 'var(--primary, #0ea5e9)',
-    thinking: '#f59e0b',
-    speaking: '#3b82f6',
-    connecting: '#9ca3af',
-    initializing: '#9ca3af',
-  };
-
-  const color = colorMap[state] || '#9ca3af';
-
-  // Speaking: use BarVisualizer with prominent animation
+  // Speaking: BarVisualizer
   if (state === 'speaking' && audioTrack) {
-    return h('div', {
-      style: {
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: '12px', padding: '10px 16px',
-        background: 'rgba(var(--primary-rgb, 59, 130, 246), 0.06)',
-        borderBottom: '1px solid rgba(var(--primary-rgb, 59, 130, 246), 0.08)',
-      },
-    },
+    return h('div', { className: 'flex items-center justify-center gap-3 py-2.5 px-4 bg-primary/5 border-b border-primary/10' },
       h('div', {
-        style: {
-          display: 'flex', alignItems: 'center', height: '28px',
-          '--lk-va-bar-width': '4px',
-          '--lk-va-bar-gap': '3px',
-          '--lk-fg': 'var(--primary, #3b82f6)',
-        } as any,
+        className: 'flex items-center h-7',
+        style: { '--lk-va-bar-width': '4px', '--lk-va-bar-gap': '3px', '--lk-fg': 'var(--primary, #3b82f6)' } as any,
       },
-        h(BarVisualizer, {
-          state: 'speaking' as any,
-          trackRef: audioTrack,
-          barCount: 7,
-          options: { minHeight: 3 },
-          style: { height: '100%' },
-        }),
+        h(BarVisualizer, { state: 'speaking' as any, trackRef: audioTrack, barCount: 7, options: { minHeight: 3 }, style: { height: '100%' } }),
       ),
-      h('span', {
-        style: { fontSize: '12px', fontWeight: 500, color: 'var(--primary, #3b82f6)' },
-      }, labelMap[state] || state),
+      h('span', { className: 'text-xs font-medium text-primary' }, labels[state]),
     );
   }
 
   // Thinking: bouncing dots
   if (state === 'thinking') {
-    return h('div', {
-      style: {
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: '10px', padding: '8px 16px',
-        background: 'rgba(245, 158, 11, 0.06)',
-        borderBottom: '1px solid rgba(245, 158, 11, 0.08)',
-      },
-    },
-      h('div', { style: { display: 'flex', gap: '3px', alignItems: 'center' } },
+    return h('div', { className: 'flex items-center justify-center gap-2.5 py-2 px-4 bg-amber-50 border-b border-amber-100' },
+      h('div', { className: 'flex gap-1 items-center' },
         ...[0, 1, 2].map(i =>
-          h('div', {
-            key: i,
-            style: {
-              width: '5px', height: '5px', borderRadius: '50%',
-              background: '#f59e0b',
-              animation: `lk-chat-dot-bounce 1.2s ease-in-out ${i * 0.15}s infinite`,
-            },
-          }),
+          h('div', { key: i, className: 'w-1.5 h-1.5 rounded-full bg-amber-500 lk-dot', style: { animationDelay: `${i * 0.15}s` } }),
         ),
       ),
-      h('span', {
-        style: { fontSize: '12px', fontWeight: 500, color: '#f59e0b' },
-      }, labelMap[state]),
+      h('span', { className: 'text-xs font-medium text-amber-600' }, labels[state]),
     );
   }
 
-  // Listening: pulsing dot
-  return h('div', {
-    style: {
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      gap: '10px', padding: '8px 16px',
-      background: `color-mix(in srgb, ${color} 6%, transparent)`,
-      borderBottom: `1px solid color-mix(in srgb, ${color} 8%, transparent)`,
-    },
-  },
-    h('div', { style: { position: 'relative', width: '10px', height: '10px' } },
-      h('div', {
-        style: {
-          position: 'absolute', inset: 0, borderRadius: '50%', background: color,
-          animation: 'lk-chat-pulse 2s ease-in-out infinite',
-        },
-      }),
-      h('div', {
-        style: {
-          position: 'absolute', inset: '2px', borderRadius: '50%', background: color,
-        },
-      }),
+  // Listening: pulsing ring
+  return h('div', { className: 'flex items-center justify-center gap-2.5 py-2 px-4 bg-primary/5 border-b border-primary/10' },
+    h('div', { className: 'relative w-2.5 h-2.5' },
+      h('div', { className: 'absolute inset-0 rounded-full bg-primary lk-pulse' }),
+      h('div', { className: 'absolute inset-0.5 rounded-full bg-primary' }),
     ),
-    h('span', {
-      style: { fontSize: '12px', fontWeight: 500, color },
-    }, labelMap[state] || state),
+    h('span', { className: 'text-xs font-medium text-primary' }, labels[state] || state),
   );
 }
 
 // ---------------------------------------------------------------------------
-// ChatInner: uses LiveKit hooks (must be inside RoomContext)
+// ChatInner (inside RoomContext)
 // ---------------------------------------------------------------------------
 
 function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => void }) {
   const [inputText, setInputText] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [speakerMuted, setSpeakerMuted] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Official LiveKit hooks
   const { state: agentState, audioTrack: agentAudioTrack } = useVoiceAssistant();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const transcriptions = useTranscriptions();
   const chat = useChat();
-  const [speakerMuted, setSpeakerMuted] = useState(false);
 
-  // Enable mic on mount
   useEffect(() => {
-    if (!isMicrophoneEnabled) {
-      localParticipant.setMicrophoneEnabled(true).catch(console.warn);
-    }
+    if (!isMicrophoneEnabled) localParticipant.setMicrophoneEnabled(true).catch(console.warn);
   }, []);
 
-  // Merge transcriptions + chat messages, deduplicate
-  const allMessages: DisplayMessage[] = useMemo(() => {
-    const msgs: DisplayMessage[] = [];
-    for (const t of transcriptions) {
-      msgs.push(transcriptionToDisplay(t, room));
-    }
+  // Merge + dedupe messages
+  const msgs: Msg[] = useMemo(() => {
+    const all: Msg[] = [];
+    for (const t of transcriptions) all.push(toMsg(t, room));
     for (const m of chat.chatMessages) {
-      msgs.push({
-        id: m.id ?? `chat-${m.timestamp}`,
-        role: m.from?.isLocal ? 'user' : 'assistant',
-        content: m.message,
-        timestamp: m.timestamp,
-      });
+      all.push({ id: m.id ?? `c-${m.timestamp}`, role: m.from?.isLocal ? 'user' : 'assistant', content: m.message, timestamp: m.timestamp });
     }
     const seen = new Set<string>();
-    const unique: DisplayMessage[] = [];
-    for (const m of msgs) {
-      if (!seen.has(m.id)) { seen.add(m.id); unique.push(m); }
-    }
-    return unique.sort((a, b) => a.timestamp - b.timestamp);
+    return all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; }).sort((a, b) => a.timestamp - b.timestamp);
   }, [transcriptions, chat.chatMessages, room]);
 
-  // Auto-scroll
   useEffect(() => {
-    const t = setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    const t = setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     return () => clearTimeout(t);
-  }, [allMessages]);
+  }, [msgs]);
 
-  // Send text via useChat().send() -- proper turn-taking
-  const handleSendText = useCallback(async () => {
+  const handleSend = useCallback(async () => {
     if (!inputText.trim()) return;
     const text = inputText.trim();
     setInputText('');
-    try {
-      await chat.send(text);
-      console.log('[LivekitChat] Sent via useChat:', text);
-    } catch (err) {
-      console.error('[LivekitChat] Send failed:', err);
-    }
+    try { await chat.send(text); } catch (e) { console.error('[LivekitChat] Send failed:', e); }
     inputRef.current?.focus();
   }, [inputText, chat]);
 
-  // Mic toggle
-  const handleMicToggle = useCallback(async () => {
-    try {
-      await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-    } catch (err) {
-      console.error('[LivekitChat] Mic toggle failed:', err);
-    }
+  const toggleMic = useCallback(async () => {
+    try { await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled); } catch {}
   }, [localParticipant, isMicrophoneEnabled]);
 
-  // Speaker toggle - mutes local audio AND tells agent to stop TTS
-  const handleSpeakerToggle = useCallback(async () => {
-    const newMuted = !speakerMuted;
-    setSpeakerMuted(newMuted);
-
-    // Immediately mute/unmute all audio elements
-    document.querySelectorAll('audio').forEach((el) => {
-      (el as HTMLAudioElement).volume = newMuted ? 0 : 1;
-    });
-
-    // Also tell agent to stop TTS via RPC
+  const toggleSpeaker = useCallback(async () => {
+    const next = !speakerMuted;
+    setSpeakerMuted(next);
+    document.querySelectorAll('audio').forEach(el => { (el as HTMLAudioElement).volume = next ? 0 : 1; });
     try {
-      const agentP = Array.from(room.remoteParticipants.values()).find(
-        (p: RemoteParticipant) => p.identity.includes('agent'),
-      );
-      if (agentP) {
-        await room.localParticipant.performRpc({
-          destinationIdentity: agentP.identity,
-          method: 'setAudioOutput',
-          payload: JSON.stringify({ enabled: !newMuted }),
-        });
-      }
-    } catch (err) {
-      console.error('[LivekitChat] Speaker toggle RPC failed:', err);
-    }
+      const agent = Array.from(room.remoteParticipants.values()).find((p: RemoteParticipant) => p.identity.includes('agent'));
+      if (agent) await room.localParticipant.performRpc({ destinationIdentity: agent.identity, method: 'setAudioOutput', payload: JSON.stringify({ enabled: !next }) });
+    } catch {}
   }, [room, speakerMuted]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); }
-  }, [handleSendText]);
+  const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  }, [handleSend]);
 
-  // --- Render ---
   return h(React.Fragment, null,
-    // Audio renderer -- KEY: manages audio + turn-taking automatically
     h(RoomAudioRenderer, null),
+    h(AgentStatusBar, { state: agentState, audioTrack: agentAudioTrack }),
 
-    // Agent status indicator with animations
-    h(AgentStatusIndicator, { state: agentState, audioTrack: agentAudioTrack }),
-
-    // Messages area
-    h('div', {
-      className: 'lk-chat-panel-messages',
-      style: {
-        flex: 1, overflowY: 'auto', padding: '12px 16px',
-        maxHeight: '280px', minHeight: '120px',
-      },
-    },
-      allMessages.length === 0
-        // Empty state
-        ? h('div', {
-            style: {
-              display: 'flex', flexDirection: 'column', alignItems: 'center',
-              justifyContent: 'center', padding: '24px 0', gap: '8px',
-            },
-          },
-            h('div', {
-              style: {
-                width: '52px', height: '52px', borderRadius: '50%',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 14,165,233), 0.08), rgba(var(--primary-rgb, 14,165,233), 0.15))',
-                border: '1px solid rgba(var(--primary-rgb, 14,165,233), 0.12)',
-              },
-            }, icon('graphic_eq', 26, { color: 'var(--primary, #0ea5e9)' })),
-            h('p', {
-              style: { fontWeight: 500, fontSize: '14px', color: 'var(--text-primary, #1f2937)' },
-            }, '\u5f00\u59cb\u5bf9\u8bdd'),
-            h('p', {
-              style: { fontSize: '12px', color: 'var(--text-muted, #9ca3af)' },
-            }, '\u8bf4\u8bdd\u6216\u8f93\u5165\u6587\u5b57'),
+    // Messages
+    h('div', { className: 'lk-chat-msgs flex-1 overflow-y-auto px-4 py-3 max-h-72 min-h-28 space-y-2' },
+      msgs.length === 0
+        ? h('div', { className: 'flex flex-col items-center justify-center py-6 gap-2' },
+            h('div', { className: 'w-13 h-13 rounded-full flex items-center justify-center bg-primary/10 border border-primary/10' },
+              micon('graphic_eq', 'text-[26px] text-primary'),
+            ),
+            h('p', { className: 'font-medium text-sm text-text-primary' }, '\u5f00\u59cb\u5bf9\u8bdd'),
+            h('p', { className: 'text-xs text-text-muted' }, '\u8bf4\u8bdd\u6216\u8f93\u5165\u6587\u5b57'),
           )
-        // Messages
         : h(React.Fragment, null,
-            ...allMessages.map((msg) =>
-              h('div', {
-                key: msg.id,
-                className: 'lk-chat-msg-enter',
-                style: {
-                  display: 'flex',
-                  justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                  marginBottom: '8px',
-                },
-              },
+            ...msgs.map(m =>
+              h('div', { key: m.id, className: `lk-msg-in flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}` },
                 h('div', {
-                  className: msg.role === 'user' ? 'glass-bubble-user' : 'glass-bubble-agent',
-                  style: {
-                    maxWidth: '82%', borderRadius: '16px', padding: '8px 14px',
-                    fontSize: '13px', lineHeight: '1.5',
-                    ...(msg.role === 'user'
-                      ? { borderBottomRightRadius: '6px', color: 'var(--text-primary, #1f2937)' }
-                      : { borderBottomLeftRadius: '6px', color: 'var(--text-primary, #1f2937)' }),
-                  },
+                  className: [
+                    'max-w-[82%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed',
+                    m.role === 'user'
+                      ? 'glass-bubble-user rounded-br-md text-text-primary'
+                      : 'glass-bubble-agent rounded-bl-md text-text-primary',
+                  ].join(' '),
                 },
-                  h('p', { style: { margin: 0, whiteSpace: 'pre-wrap' } }, msg.content),
+                  h('p', { className: 'whitespace-pre-wrap m-0' }, m.content),
                 ),
               ),
             ),
-            // Inline BarVisualizer when agent is speaking (LiveKit demo style)
-            agentState === 'speaking' && agentAudioTrack && h('div', {
-              style: {
-                display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
-                marginBottom: '8px',
-              },
-            },
-              h('div', {
-                className: 'glass-bubble-agent',
-                style: {
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  borderRadius: '16px', borderBottomLeftRadius: '6px',
-                  padding: '10px 16px',
-                },
-              },
+            // Speaking bubble with BarVisualizer
+            agentState === 'speaking' && agentAudioTrack && h('div', { className: 'lk-msg-in flex justify-start' },
+              h('div', { className: 'glass-bubble-agent rounded-2xl rounded-bl-md flex items-center gap-2 px-4 py-2.5' },
                 h('div', {
-                  style: {
-                    display: 'flex', alignItems: 'center', height: '20px',
-                    '--lk-va-bar-width': '3px',
-                    '--lk-va-bar-gap': '2px',
-                    '--lk-fg': 'var(--primary, #3b82f6)',
-                  } as any,
+                  className: 'flex items-center h-5',
+                  style: { '--lk-va-bar-width': '3px', '--lk-va-bar-gap': '2px', '--lk-fg': 'var(--primary, #3b82f6)' } as any,
                 },
-                  h(BarVisualizer, {
-                    state: 'speaking' as any,
-                    trackRef: agentAudioTrack,
-                    barCount: 5,
-                    options: { minHeight: 3 },
-                    style: { height: '100%' },
-                  }),
+                  h(BarVisualizer, { state: 'speaking' as any, trackRef: agentAudioTrack, barCount: 5, options: { minHeight: 3 }, style: { height: '100%' } }),
                 ),
-                h('span', {
-                  style: { fontSize: '12px', color: 'var(--text-muted, #9ca3af)' },
-                }, '\u6b63\u5728\u8bf4\u8bdd...'),
+                h('span', { className: 'text-xs text-text-muted' }, '\u6b63\u5728\u8bf4\u8bdd...'),
               ),
             ),
-            h('div', { ref: messagesEndRef }),
+            h('div', { ref: endRef }),
           ),
     ),
 
     // Input area
-    h('div', {
-      style: {
-        padding: '10px 12px',
-        borderTop: '1px solid rgba(255,255,255,0.4)',
-        background: 'rgba(255,255,255,0.25)',
-      },
-    },
-      // Input row
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-        // Mic button
+    h('div', { className: 'p-2.5 border-t border-white/40 bg-white/25' },
+      h('div', { className: 'flex items-center gap-1.5' },
+        // Mic
         h('button', {
-          onClick: handleMicToggle,
-          title: isMicrophoneEnabled ? '\u9759\u97f3\u9ea6\u514b\u98ce' : '\u5f00\u542f\u9ea6\u514b\u98ce',
-          style: {
-            width: '36px', height: '36px', borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: 'none', cursor: 'pointer', flexShrink: 0,
-            transition: 'all 0.2s',
-            ...(isMicrophoneEnabled
-              ? {
-                  background: 'var(--primary, #0ea5e9)',
-                  color: 'white',
-                  boxShadow: '0 2px 8px rgba(var(--primary-rgb, 14,165,233), 0.3)',
-                }
-              : {
-                  background: 'rgba(0,0,0,0.06)',
-                  color: 'var(--text-muted, #6b7280)',
-                }),
-          },
-        }, icon(isMicrophoneEnabled ? 'mic' : 'mic_off', 18)),
+          onClick: toggleMic,
+          title: isMicrophoneEnabled ? '\u9759\u97f3' : '\u5f00\u9ea6',
+          className: [
+            'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border-none cursor-pointer transition-all duration-200',
+            isMicrophoneEnabled ? 'bg-primary text-white shadow-primary/20 shadow-md' : 'bg-black/5 text-text-muted',
+          ].join(' '),
+        }, micon(isMicrophoneEnabled ? 'mic' : 'mic_off', 'text-[18px]')),
 
-        // Text input
-        h('div', {
-          className: 'glass-input',
-          style: {
-            flex: 1, display: 'flex', alignItems: 'center',
-            borderRadius: '20px', overflow: 'hidden',
-          },
-        },
+        // Input
+        h('div', { className: 'glass-input flex-1 flex items-center rounded-full overflow-hidden' },
           h('input', {
-            ref: inputRef,
-            type: 'text',
-            value: inputText,
+            ref: inputRef, type: 'text', value: inputText,
             onChange: (e: React.ChangeEvent<HTMLInputElement>) => setInputText(e.target.value),
-            onKeyDown: handleKeyDown,
+            onKeyDown: onKey,
             placeholder: agentState === 'listening' ? '\u6b63\u5728\u8046\u542c...' : agentState === 'speaking' ? '\u52a9\u624b\u56de\u590d\u4e2d...' : '\u8f93\u5165\u6d88\u606f...',
             disabled: chat.isSending,
-            className: 'input-inner',
-            style: {
-              flex: 1, padding: '7px 14px', fontSize: '13px',
-              color: 'var(--text-primary, #1f2937)',
-              fontFamily: 'inherit',
-            },
+            className: 'input-inner flex-1 px-3.5 py-1.5 text-[13px] text-text-primary font-[inherit]',
           }),
         ),
 
-        // Send button
+        // Send
         h('button', {
-          onClick: handleSendText,
-          disabled: !inputText.trim() || chat.isSending,
-          title: '\u53d1\u9001',
-          style: {
-            width: '36px', height: '36px', borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: 'none', cursor: inputText.trim() ? 'pointer' : 'default',
-            flexShrink: 0, transition: 'all 0.2s',
-            ...(inputText.trim()
-              ? {
-                  background: 'var(--primary, #0ea5e9)',
-                  color: 'white',
-                  boxShadow: '0 2px 8px rgba(var(--primary-rgb, 14,165,233), 0.3)',
-                }
-              : {
-                  background: 'rgba(0,0,0,0.04)',
-                  color: 'rgba(0,0,0,0.2)',
-                }),
-          },
-        }, icon('send', 18)),
+          onClick: handleSend, disabled: !inputText.trim() || chat.isSending, title: '\u53d1\u9001',
+          className: [
+            'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border-none transition-all duration-200',
+            inputText.trim() ? 'bg-primary text-white shadow-primary/20 shadow-md cursor-pointer' : 'bg-black/5 text-black/20 cursor-default',
+          ].join(' '),
+        }, micon('send', 'text-[18px]')),
 
-        // Speaker toggle
+        // Speaker
         h('button', {
-          onClick: handleSpeakerToggle,
-          title: speakerMuted ? '\u5f00\u542f\u8bed\u97f3\u56de\u590d' : '\u5207\u6362\u6587\u5b57\u6a21\u5f0f',
-          style: {
-            width: '36px', height: '36px', borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: '1px solid rgba(0,0,0,0.06)',
-            cursor: 'pointer', flexShrink: 0, transition: 'all 0.2s',
-            background: speakerMuted
-              ? 'rgba(245, 158, 11, 0.1)'
-              : 'rgba(255,255,255,0.5)',
-            color: speakerMuted ? '#d97706' : 'var(--text-muted, #6b7280)',
-          },
-        }, icon(speakerMuted ? 'volume_off' : 'volume_up', 18)),
+          onClick: toggleSpeaker,
+          title: speakerMuted ? '\u5f00\u542f\u8bed\u97f3' : '\u9759\u97f3',
+          className: [
+            'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border cursor-pointer transition-all duration-200',
+            speakerMuted ? 'bg-amber-50 text-amber-600 border-amber-200/50' : 'bg-white/50 text-text-muted border-black/5',
+          ].join(' '),
+        }, micon(speakerMuted ? 'volume_off' : 'volume_up', 'text-[18px]')),
       ),
 
-      // Status + disconnect row
-      h('div', {
-        style: {
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          marginTop: '8px', padding: '0 2px',
-        },
-      },
-        // Left: status
-        h('div', {
-          style: { display: 'flex', alignItems: 'center', gap: '6px' },
-        },
+      // Status row
+      h('div', { className: 'flex items-center justify-between mt-2 px-0.5' },
+        h('div', { className: 'flex items-center gap-1.5' },
           h('div', {
-            style: {
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: agentState === 'speaking' ? '#3b82f6'
-                : agentState === 'thinking' ? '#f59e0b'
-                : agentState === 'listening' ? 'var(--primary, #22c55e)'
-                : '#9ca3af',
-            },
+            className: [
+              'w-1.5 h-1.5 rounded-full',
+              agentState === 'speaking' ? 'bg-primary' : agentState === 'thinking' ? 'bg-amber-500' : agentState === 'listening' ? 'bg-primary' : 'bg-gray-400',
+            ].join(' '),
           }),
-          h('span', {
-            style: { fontSize: '11px', color: 'var(--text-muted, #9ca3af)' },
-          }, speakerMuted ? '\u6587\u5b57\u6a21\u5f0f' : '\u8bed\u97f3\u6a21\u5f0f'),
+          h('span', { className: 'text-[11px] text-text-muted' }, speakerMuted ? '\u6587\u5b57\u6a21\u5f0f' : '\u8bed\u97f3\u6a21\u5f0f'),
         ),
-
-        // Right: disconnect
         h('button', {
           onClick: onDisconnect,
-          style: {
-            display: 'flex', alignItems: 'center', gap: '4px',
-            fontSize: '11px', color: '#ef4444', background: 'none',
-            border: 'none', cursor: 'pointer', padding: '4px 8px',
-            borderRadius: '8px', transition: 'all 0.15s',
-          },
-          onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => {
-            e.currentTarget.style.background = 'rgba(239,68,68,0.08)';
-          },
-          onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => {
-            e.currentTarget.style.background = 'none';
-          },
+          className: 'flex items-center gap-1 text-[11px] text-red-500 bg-transparent border-none cursor-pointer px-2 py-1 rounded-lg hover:bg-red-500/5 transition-colors',
         },
-          icon('call_end', 14, { color: '#ef4444' }),
+          micon('call_end', 'text-[14px] text-red-500'),
           '\u65ad\u5f00\u8fde\u63a5',
         ),
       ),
@@ -609,13 +338,13 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
   );
 }
 
-const ChatInnerComponent = React.memo(ChatInner);
+const ChatInnerMemo = React.memo(ChatInner);
 
 // ---------------------------------------------------------------------------
-// LivekitChatPanel: manages Room lifecycle + expand/collapse
+// LivekitChatPanel
 // ---------------------------------------------------------------------------
 
-const SILENCE_TIMEOUT_MS = 5 * 60 * 1000;
+const SILENCE_MS = 5 * 60 * 1000;
 
 interface PanelProps {
   scene: SceneType;
@@ -625,238 +354,146 @@ interface PanelProps {
 }
 
 function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: PanelProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [connectionState, setConnectionState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  const [expanded, setExpanded] = useState(true);
+  const [connState, setConnState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [room, setRoom] = useState<Room | null>(null);
   const roomRef = useRef<Room | null>(null);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silenceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { injectCSS(); }, []);
 
-  const resetSilenceTimer = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = setTimeout(() => {
-      if (roomRef.current) {
-        console.warn('[LivekitChat] 5-min silence timeout');
-        roomRef.current.disconnect();
-      }
-    }, SILENCE_TIMEOUT_MS);
+  const resetSilence = useCallback(() => {
+    if (silenceRef.current) clearTimeout(silenceRef.current);
+    silenceRef.current = setTimeout(() => { roomRef.current?.disconnect(); }, SILENCE_MS);
   }, []);
 
-  const clearSilenceTimer = useCallback(() => {
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+  const clearSilence = useCallback(() => {
+    if (silenceRef.current) { clearTimeout(silenceRef.current); silenceRef.current = null; }
   }, []);
 
   const connect = useCallback(async () => {
-    if (connectionState === 'connecting' || connectionState === 'connected') return;
-    setConnectionState('connecting');
-    setIsExpanded(true);
+    if (connState === 'connecting' || connState === 'connected') return;
+    setConnState('connecting');
+    setExpanded(true);
     setError(null);
     onSessionStart?.();
 
     try {
       const resp = await livekitClient.getToken({ scene });
-      const newRoom = new Room({
+      const r = new Room({
         adaptiveStream: true, dynacast: true,
         audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-      roomRef.current = newRoom;
+      roomRef.current = r;
 
       setSessionDisconnectCallback(
         () => { roomRef.current?.disconnect(); },
         () => { roomRef.current?.localParticipant.setMicrophoneEnabled(false); },
       );
 
-      newRoom.localParticipant.registerRpcMethod('executeAction', async (data: any) => {
+      r.registerRpcMethod('executeAction', async (data: any) => {
         try {
           const action: ActionPayload = JSON.parse(data.payload);
-          const result = await executeAction(action);
-          return JSON.stringify(result);
+          return JSON.stringify(await executeAction(action));
         } catch (e) {
           return JSON.stringify({ success: false, error: String(e) });
         }
       });
 
-      newRoom.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-        if (state === ConnectionState.Connected) setConnectionState('connected');
-        else if (state === ConnectionState.Disconnected) { setConnectionState('idle'); setRoom(null); }
-      });
-
-      newRoom.on(RoomEvent.Disconnected, () => {
-        clearSilenceTimer();
-        setConnectionState('idle');
-        setIsExpanded(false);
+      // Only handle Disconnected here — Connected is set AFTER setRoom below
+      r.on(RoomEvent.Disconnected, () => {
+        clearSilence();
+        setConnState('idle');
+        setExpanded(false);
         setRoom(null);
         roomRef.current = null;
         onSessionEnd?.();
       });
 
-      newRoom.on(RoomEvent.ActiveSpeakersChanged, () => resetSilenceTimer());
-      newRoom.on(RoomEvent.TranscriptionReceived, () => resetSilenceTimer());
+      r.on(RoomEvent.ActiveSpeakersChanged, () => resetSilence());
+      r.on(RoomEvent.TranscriptionReceived, () => resetSilence());
 
       const token = (resp as any).participantToken || (resp as any).token;
       if (!token) throw new Error('No token received');
 
-      await newRoom.connect((resp as any).serverUrl, token);
+      await r.connect((resp as any).serverUrl, token);
 
-      try { await newRoom.localParticipant.setMicrophoneEnabled(true); }
-      catch (micErr) { console.warn('[LivekitChat] Mic enable failed:', micErr); }
+      try { await r.localParticipant.setMicrophoneEnabled(true); }
+      catch (e) { console.warn('[LivekitChat] Mic enable failed:', e); }
 
-      setRoom(newRoom);
-      resetSilenceTimer();
+      // Set room AND connected state together to prevent flash
+      setRoom(r);
+      setConnState('connected');
+      resetSilence();
       onSessionStart?.();
     } catch (e: any) {
       console.error('[LivekitChat] Connection error:', e);
       setError(e?.message || 'Connection failed');
-      setConnectionState('error');
+      setConnState('error');
     }
-  }, [connectionState, scene, onSessionStart, onSessionEnd, resetSilenceTimer, clearSilenceTimer]);
+  }, [connState, scene, onSessionStart, onSessionEnd, resetSilence, clearSilence]);
 
   const disconnect = useCallback(async () => {
-    clearSilenceTimer();
+    clearSilence();
     if (roomRef.current) { await roomRef.current.disconnect(); roomRef.current = null; }
     setRoom(null);
-    setConnectionState('idle');
-    setIsExpanded(false);
+    setConnState('idle');
+    setExpanded(false);
     onSessionEnd?.();
-  }, [onSessionEnd, clearSilenceTimer]);
+  }, [onSessionEnd, clearSilence]);
 
   useEffect(() => { handleRef({ connect, disconnect }); }, [connect, disconnect, handleRef]);
+  useEffect(() => () => { clearSilence(); if (roomRef.current) roomRef.current.disconnect(); }, []);
 
-  useEffect(() => {
-    return () => { clearSilenceTimer(); if (roomRef.current) roomRef.current.disconnect(); };
-  }, []);
+  const isConnected = connState === 'connected' && room;
 
-  // --- Render ---
-  const isConnected = connectionState === 'connected' && room;
+  return h('div', { className: 'liquid-glass flex flex-col w-full rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.08)] font-display transition-all duration-300' },
 
-  return h('div', {
-    className: 'liquid-glass',
-    style: {
-      display: 'flex', flexDirection: 'column' as const,
-      width: '100%',
-      borderRadius: '16px', overflow: 'hidden',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)',
-      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
-      transition: 'all 0.3s ease',
-    },
-  },
-
-    // ── Header ─────────────────────────────────
+    // Header
     h('div', {
-      onClick: () => setIsExpanded(!isExpanded),
-      style: {
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 14px', cursor: 'pointer', userSelect: 'none' as const,
-        borderBottom: isExpanded ? '1px solid rgba(255,255,255,0.3)' : 'none',
-        transition: 'border-bottom 0.2s',
-      },
+      onClick: () => setExpanded(!expanded),
+      className: `flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none transition-all ${expanded ? 'border-b border-white/30' : ''}`,
     },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-        // Icon with connection indicator
-        h('div', { style: { position: 'relative' } },
-          icon('chat_bubble', 18, {
-            color: isConnected ? 'var(--primary, #0ea5e9)' : 'var(--text-muted, #6b7280)',
-          }),
-          isConnected && h('div', {
-            style: {
-              position: 'absolute', top: '-2px', right: '-2px',
-              width: '7px', height: '7px', borderRadius: '50%',
-              background: 'var(--primary, #0ea5e9)',
-              border: '1.5px solid white',
-            },
-          }),
+      h('div', { className: 'flex items-center gap-2.5' },
+        h('div', { className: 'relative h-[18px]' },
+          micon('chat_bubble', `text-[18px] ${isConnected ? 'text-primary' : 'text-text-muted'}`),
+          isConnected && h('div', { className: 'absolute -top-0.5 -right-0.5 w-[7px] h-[7px] rounded-full bg-primary border-[1.5px] border-white' }),
         ),
+        h('span', { className: 'text-[13px] font-semibold text-text-primary' }, '\u8bed\u97f3\u52a9\u624b'),
         h('span', {
-          style: {
-            fontSize: '13px', fontWeight: 600,
-            color: 'var(--text-primary, #1f2937)',
-          },
-        }, '\u8bed\u97f3\u52a9\u624b'),
-        h('span', {
-          style: {
-            fontSize: '11px', fontWeight: 500,
-            color: isConnected ? 'var(--primary, #0ea5e9)'
-              : connectionState === 'connecting' ? '#f59e0b'
-              : 'var(--text-muted, #9ca3af)',
-          },
-        }, isConnected ? '\u5df2\u8fde\u63a5'
-          : connectionState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u672a\u8fde\u63a5'),
+          className: `text-[11px] font-medium ${isConnected ? 'text-primary' : connState === 'connecting' ? 'text-amber-500' : 'text-text-muted'}`,
+        }, isConnected ? '\u5df2\u8fde\u63a5' : connState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u672a\u8fde\u63a5'),
       ),
-      icon(isExpanded ? 'expand_more' : 'expand_less', 18, { color: 'var(--text-muted, #9ca3af)' }),
+      micon(expanded ? 'expand_more' : 'expand_less', 'text-[18px] text-text-muted'),
     ),
 
-    // ── Expanded Content ──────────────────────────
-    isExpanded && (
+    // Content
+    expanded && (
       isConnected
-        // Connected: LiveKit context with hooks
-        ? h(RoomContext.Provider, { value: room },
-            h(ChatInnerComponent, { room, onDisconnect: disconnect }),
-          )
-        // Idle / Connecting / Error
-        : h('div', {
-            style: {
-              display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
-              justifyContent: 'center', padding: '28px 24px', gap: '4px',
-            },
-          },
-            // Icon
-            h('div', {
-              style: {
-                width: '56px', height: '56px', marginBottom: '8px',
-                borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 14,165,233), 0.08), rgba(var(--primary-rgb, 14,165,233), 0.18))',
-                border: '1px solid rgba(var(--primary-rgb, 14,165,233), 0.12)',
-                boxShadow: '0 4px 12px rgba(var(--primary-rgb, 14,165,233), 0.08)',
-              },
-            },
-              connectionState === 'connecting'
-                ? icon('sync', 26, {
-                    color: 'var(--primary, #0ea5e9)',
-                    animation: 'spin 1.5s linear infinite',
-                  })
-                : icon('graphic_eq', 26, { color: 'var(--primary, #0ea5e9)' }),
+        ? h(RoomContext.Provider, { value: room }, h(ChatInnerMemo, { room, onDisconnect: disconnect }))
+        : h('div', { className: 'flex flex-col items-center justify-center py-7 px-6 gap-1' },
+            h('div', { className: 'w-14 h-14 mb-2 rounded-full flex items-center justify-center bg-primary/10 border border-primary/10 shadow-sm' },
+              micon(connState === 'connecting' ? 'sync' : 'graphic_eq',
+                `text-[26px] text-primary ${connState === 'connecting' ? 'lk-spin' : ''}`),
             ),
-            h('p', {
-              style: { fontWeight: 600, fontSize: '14px', color: 'var(--text-primary, #4b5563)', margin: 0 },
-            }, '\u8bed\u97f3\u52a9\u624b'),
-            h('p', {
-              style: { fontSize: '12px', color: 'var(--text-muted, #9ca3af)', margin: '0 0 14px' },
-            }, '\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u5f00\u59cb\u5bf9\u8bdd'),
-
-            // Connect button
+            h('p', { className: 'font-semibold text-sm text-text-primary m-0' }, '\u8bed\u97f3\u52a9\u624b'),
+            h('p', { className: 'text-xs text-text-muted m-0 mb-3.5' }, '\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u5f00\u59cb\u5bf9\u8bdd'),
             h('button', {
               onClick: connect,
-              disabled: connectionState === 'connecting',
-              style: {
-                display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '10px 24px', borderRadius: '20px',
-                fontSize: '13px', fontWeight: 600, border: 'none', cursor: 'pointer',
-                transition: 'all 0.2s',
-                ...(connectionState === 'connecting'
-                  ? {
-                      background: 'rgba(var(--primary-rgb, 14,165,233), 0.1)',
-                      color: 'var(--primary, #0284c7)',
-                    }
-                  : {
-                      background: 'var(--primary, #0ea5e9)',
-                      color: 'white',
-                      boxShadow: '0 4px 12px rgba(var(--primary-rgb, 14,165,233), 0.25)',
-                    }),
-              },
+              disabled: connState === 'connecting',
+              className: [
+                'flex items-center gap-2 px-6 py-2.5 rounded-full text-[13px] font-semibold border-none cursor-pointer transition-all duration-200',
+                connState === 'connecting'
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-primary text-white shadow-primary/20 shadow-lg hover:brightness-110',
+              ].join(' '),
             },
-              icon(connectionState === 'connecting' ? 'sync' : 'phone_in_talk', 16, {
-                color: 'inherit',
-                ...(connectionState === 'connecting' ? { animation: 'spin 1.5s linear infinite' } : {}),
-              }),
-              connectionState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u5f00\u59cb\u5bf9\u8bdd',
+              micon(connState === 'connecting' ? 'sync' : 'phone_in_talk',
+                `text-[16px] ${connState === 'connecting' ? 'lk-spin' : ''}`),
+              connState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u5f00\u59cb\u5bf9\u8bdd',
             ),
-
-            // Error message
-            error && h('p', {
-              style: { fontSize: '11px', color: '#ef4444', marginTop: '10px', textAlign: 'center' as const },
-            }, error),
+            error && h('p', { className: 'text-[11px] text-red-500 mt-2.5 text-center' }, error),
           )
     ),
   );

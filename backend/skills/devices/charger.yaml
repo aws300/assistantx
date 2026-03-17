@@ -308,3 +308,4 @@ skills:
         
     responses:
       success: "当前电价${rate}元/度，已充${totalEnergy}度，费用${currentCost}元，充电${duration}分钟"
+

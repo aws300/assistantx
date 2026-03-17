@@ -308,3 +308,32 @@ skills:
         
     responses:
       success: "当前电价${rate}元/度，已充${totalEnergy}度，费用${currentCost}元，充电${duration}分钟"
+
+  # ── Session Control ──────────────────────────────────────────
+  - id: session.exit
+    category: session
+    name: "退出会话"
+    description: "结束当前语音会话，断开连接"
+    triggers:
+      - "关闭"
+      - "退出"
+      - "退下"
+      - "再见"
+      - "拜拜"
+      - "结束对话"
+      - "结束会话"
+      - "断开连接"
+      - "关闭语音助手"
+      - "退出语音"
+      - "不用了"
+      - "没事了"
+      - "好了"
+      - "quit"
+      - "exit"
+      - "bye"
+    parameters: []
+    action:
+      id: "session.disconnect"
+      payload_template: {}
+    responses:
+      success: "好的，再见"

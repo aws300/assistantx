@@ -123,7 +123,7 @@ const InlineChargerStatusCard: Component = () => {
         </div>
         <div class="relative h-4 bg-gray-200 rounded-full overflow-hidden">
           <div
-            class="absolute left-0 top-0 h-full bg-gradient-to-r from-green-400 to-green-600 transition-all duration-500"
+            class="absolute left-0 top-0 h-full bg-primary transition-all duration-500"
             style={{ width: `${st().soc}%` }}
           />
           {/* Target marker */}

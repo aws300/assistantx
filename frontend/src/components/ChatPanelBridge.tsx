@@ -53,8 +53,7 @@ const ChatPanelBridge: Component<ChatPanelBridgeProps> = (rawProps) => {
   return (
     <div
       ref={container}
-      class="fixed right-4 bottom-4 z-50"
-      style={{ width: '380px' }}
+      class="fixed right-4 bottom-4 z-50 w-[380px]"
     />
   );
 };

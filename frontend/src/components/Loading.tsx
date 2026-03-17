@@ -5,25 +5,16 @@ interface LoadingProps {
   size?: 'sm' | 'md' | 'lg';
 }
 
+const sizeClasses = {
+  sm: 'w-5 h-5',
+  md: 'w-[30px] h-[30px]',
+  lg: 'w-10 h-10',
+};
+
 export const Loading: Component<LoadingProps> = (props) => {
-  const sizeMap = {
-    sm: '20px',
-    md: '30px',
-    lg: '40px',
-  };
-
-  const size = sizeMap[props.size || 'md'];
-
   const LoadingSpinner = () => (
     <div
-      style={{
-        width: size,
-        height: size,
-        'box-sizing': 'border-box',
-        'border-radius': '50%',
-        'box-shadow': '0 -10px 0 13px rgba(255, 255, 255, 0.6) inset',
-        animation: 'loading-rotate 1s infinite linear',
-      }}
+      class={`${sizeClasses[props.size || 'md']} rounded-full box-border shadow-[0_-10px_0_13px_rgba(255,255,255,0.6)_inset] animate-spin`}
     />
   );
 
@@ -32,24 +23,9 @@ export const Loading: Component<LoadingProps> = (props) => {
       when={props.fullscreen}
       fallback={<LoadingSpinner />}
     >
-      {/* Fullscreen loading overlay */}
-      <div
-        class="fixed inset-0 flex items-center justify-center"
-        style={{
-          'z-index': '99',
-          'background-color': 'rgba(0, 0, 0, 0.3)',
-        }}
-      >
+      <div class="fixed inset-0 z-[99] flex items-center justify-center bg-black/30">
         <LoadingSpinner />
       </div>
-
-      <style>{`
-        @keyframes loading-rotate {
-          100% {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
     </Show>
   );
 };

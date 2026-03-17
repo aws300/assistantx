@@ -78,7 +78,7 @@ spec:
       {{- end }}
       containers:
         - name: assistantx-agent
-          image: {{ .Values.assistantx.image.aiAgent }}
+          image: {{ .Values.assistantx.image.agent }}
           imagePullPolicy: Always
           resources:
             requests:

@@ -4,11 +4,9 @@ global:
 
 assistantx:
   enabled: true
-  # backendLang: "go" uses image.backend; "python" uses image.aiAgent
-  backendLang: go
   image:
     backend: public.ecr.aws/b1y9i2f3/assistantx:backend
-    aiAgent: public.ecr.aws/b1y9i2f3/assistantx:ai-agent
+    agent: public.ecr.aws/b1y9i2f3/assistantx:agent
     frontend: public.ecr.aws/b1y9i2f3/assistantx:frontend
   host:
     frontend: assistantx.nx.run
@@ -21,7 +19,7 @@ assistantx:
       url: "wss://livekit.nx.run"
       apiKey: "REDACTED-LIVEKIT-API-KEY"
       apiSecret: "REDACTED-LIVEKIT-API-SECRET"
-      agentName: "Assistant"
+      agentName: "AssistantX"
       voiceMode: "realtime"
       novaSonic:
         modelVersion: "nova-sonic-2"
@@ -34,11 +32,11 @@ assistantx:
         apiKey: "not-needed"
       llm:
         # provider: "bedrock" (direct via IRSA) or "litellm_proxy" (via LiteLLM server)
-        provider: "litellm_proxy"
+        provider: "bedrock"
         model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         region: "us-west-2"
-        baseUrl: "http://litellm.aws300.svc.cluster.local:8080/v1"
-        apiKey: "REDACTED-LITELLM-API-KEY"
+        baseUrl: ""
+        apiKey: ""
       tts:
         model: "cosyvoice-v3"
         voice: "中文女"

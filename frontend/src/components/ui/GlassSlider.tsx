@@ -30,11 +30,8 @@ export const GlassSlider: Component<GlassSliderProps> = (props) => {
       <div class="relative">
         <div class="absolute inset-0 h-1.5 bg-black/10 rounded-full top-1/2 -translate-y-1/2" />
         <div
-          class="absolute h-1.5 rounded-full top-1/2 -translate-y-1/2"
-          style={{
-            width: `${percentage()}%`,
-            'background-color': 'var(--primary)',
-          }}
+          class="absolute h-1.5 rounded-full top-1/2 -translate-y-1/2 bg-primary"
+          style={{ width: `${percentage()}%` }}
         />
         <input
           type="range"

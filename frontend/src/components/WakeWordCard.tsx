@@ -149,10 +149,10 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
     }
     if (ls.overall === 'ready') {
       if (detected()) {
-        return { text: `检测到! (${((lastScore() ?? 0) * 100).toFixed(0)}%)`, color: 'text-emerald-500', dot: 'bg-emerald-500', animate: true };
+        return { text: `检测到! (${((lastScore() ?? 0) * 100).toFixed(0)}%)`, color: 'text-primary', dot: 'bg-primary', animate: true };
       }
       if (isListening()) {
-        return { text: '正在监听...', color: 'text-blue-500', dot: 'bg-blue-500', animate: true };
+        return { text: '正在监听...', color: 'text-primary', dot: 'bg-primary', animate: true };
       }
       return { text: '已就绪', color: 'text-gray-500', dot: 'bg-gray-400', animate: false };
     }
@@ -167,7 +167,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
       <div
         class={cn(
           'absolute inset-0 rounded-2xl transition-all duration-500',
-          detected() ? 'bg-emerald-400/20 shadow-[0_0_40px_5px_rgba(52,211,153,0.3)]' : '',
+          detected() ? 'bg-primary/20 shadow-[0_0_40px_5px_rgba(var(--primary-rgb),0.3)]' : '',
         )}
       />
 
@@ -177,7 +177,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
           props.dark
             ? 'bg-black/20 backdrop-blur-xl border border-white/10'
             : 'bg-white/70 backdrop-blur-xl border border-white/50 shadow-[0_4px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)]',
-          detected() && 'border-emerald-300/60',
+          detected() && 'border-primary/30',
         )}
       >
         <div class="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-slate-100/30 pointer-events-none" />
@@ -190,9 +190,9 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
                 class={cn(
                   'w-10 h-10 rounded-xl flex items-center justify-center transition-all',
                   detected()
-                    ? 'bg-emerald-100 text-emerald-600'
+                    ? 'bg-primary/10 text-primary'
                     : isListening()
-                      ? 'bg-blue-100 text-blue-600'
+                      ? 'bg-primary/10 text-primary'
                       : 'bg-gray-100 text-gray-500',
                 )}
               >
@@ -218,7 +218,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : isListening()
                     ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                    : 'bg-blue-100 text-blue-600 hover:bg-blue-200',
+                    : 'bg-primary/10 text-primary hover:bg-primary/20',
               )}
               onClick={handleToggle}
               disabled={props.isSessionActive}
@@ -267,7 +267,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
                   <div
                     class={cn(
                       'h-1 rounded-full transition-all duration-300',
-                      loadingState()[model] === 'ready' ? 'bg-emerald-400' : 'bg-gray-200',
+                      loadingState()[model] === 'ready' ? 'bg-primary' : 'bg-gray-200',
                     )}
                   />
                 )}

@@ -8,9 +8,9 @@
 #   (default)              — Deploy Helm chart to EKS only (no build)
 #   helm                   — Deploy Helm chart to EKS
 #   backend                — Build, push Go backend image and restart
-#   backend-py             — Build, push Python backend image and deploy with it
+#   agent                  — Build, push Python agent image and deploy
 #   frontend               — Build, push frontend image and restart
-#   docker                 — Build and push both images (Go backend + frontend)
+#   docker                 — Build and push all images
 #   chart                  — Package and push Helm chart to ECR public OCI
 #   all                    — Build all images + push chart + deploy
 #   create-irsa-role NAME  — Create an IAM role for IRSA with minimum required permissions
@@ -136,21 +136,20 @@ build_backend() {
     log "========== backend done =========="
 }
 
-build_ai_agent() {
-    log "========== ai-agent (Python): proto → build → push → helm deploy =========="
+build_agent() {
+    log "========== agent (Python): build → push → helm deploy =========="
     ecr_public_login
 
-    log "[1/3] Building and pushing ai-agent image..."
-    # Build context is ai-agent/ directory
-    local image="${ECR_PUBLIC_IMAGE}:ai-agent"
+    log "[1/3] Building and pushing agent image..."
+    local image="${ECR_PUBLIC_IMAGE}:agent"
     docker build \
         -t "$image" \
-        "$SCRIPT_DIR/ai-agent" \
-        || fail "ai-agent build failed"
-    docker push "$image" || fail "ai-agent push failed"
-    info "Backend-py image pushed: $image"
+        "$SCRIPT_DIR/agent" \
+        || fail "agent build failed"
+    docker push "$image" || fail "agent push failed"
+    info "Agent image pushed: $image"
 
-    log "[2/3] Deploying Helm chart with ai-agent image..."
+    log "[2/3] Deploying Helm chart with agent image..."
     local values_args=()
     if [[ -n "$HELM_VALUES_FILE" ]]; then
         [[ -f "$SCRIPT_DIR/$HELM_VALUES_FILE" ]] \
@@ -162,13 +161,12 @@ build_ai_agent() {
         --namespace "$HELM_NAMESPACE" \
         --create-namespace \
         "${values_args[@]}" \
-        --set "assistantx.backendLang=python" \
-        --set "assistantx.image.aiAgent=${image}" \
-        || fail "Helm deploy with backend-py failed"
+        --set "assistantx.image.agent=${image}" \
+        || fail "Helm deploy with agent failed"
 
-    log "[3/3] Restarting backend deployment..."
-    restart_deployment "assistantx-backend"
-    log "========== backend-py done =========="
+    log "[3/3] Restarting agent deployment..."
+    restart_deployment "assistantx-agent"
+    log "========== agent done =========="
 }
 
 build_frontend() {
@@ -203,11 +201,16 @@ build_docker() {
 
     log "[3/3] Building and pushing images..."
     local backend_image="${ECR_PUBLIC_IMAGE}:backend"
+    local agent_image="${ECR_PUBLIC_IMAGE}:agent"
     local frontend_image="${ECR_PUBLIC_IMAGE}:frontend"
 
-    docker build -t "$backend_image" "$SCRIPT_DIR/backend"   || fail "backend build failed"
+    docker build -t "$backend_image"  "$SCRIPT_DIR/backend"  || fail "backend build failed"
     docker push "$backend_image"                              || fail "backend push failed"
     info "Pushed: $backend_image"
+
+    docker build -t "$agent_image"    "$SCRIPT_DIR/agent"    || fail "agent build failed"
+    docker push "$agent_image"                                || fail "agent push failed"
+    info "Pushed: $agent_image"
 
     docker build -t "$frontend_image" "$SCRIPT_DIR/frontend" || fail "frontend build failed"
     docker push "$frontend_image"                             || fail "frontend push failed"
@@ -393,19 +396,14 @@ show_help() {
     echo "  (default)              Deploy Helm chart to EKS (no build)"
     echo "  helm                   Deploy Helm chart to EKS"
     echo "  backend                Build, push Go backend image (:backend) and restart"
-    echo "  backend-py             Build, push Python backend image (:ai-agent) and deploy"
+    echo "  agent                  Build, push Python agent image (:agent) and deploy"
     echo "  frontend               Build, push frontend image (:frontend) and restart"
-    echo "  docker                 Build and push both images (Go backend + frontend)"
-    echo "  chart                  Package and push Helm chart to oci://public.ecr.aws/b1y9i2f3/cnf"
+    echo "  docker                 Build and push all images (backend + agent + frontend)"
+    echo "  chart                  Package and push Helm chart to oci://public.ecr.aws/b1y9i2f3"
     echo "  all                    Build all images + push chart + deploy"
     echo "  create-irsa-role NAME  Create IAM role NAME with minimum IRSA permissions"
     echo "                         (reads policy template from scripts/irsa-policy.json)"
     echo "  help                   Show this help"
-    echo ""
-    echo "Backend switching:"
-    echo "  backend                Uses Go backend  (sets assistantx.backendLang=go)"
-    echo "  backend-py             Uses Python backend (sets assistantx.backendLang=python)"
-    echo "  Or set manually:  helm upgrade ... --set assistantx.backendLang=python"
     echo ""
     echo "Required environment variables:"
     echo "  AWS_DEFAULT_REGION        AWS region (e.g. us-west-2)"
@@ -437,7 +435,7 @@ verify_aws
 case "$COMMAND" in
     helm)              deploy_helm ;;
     backend)           build_backend ;;
-    ai-agent)        build_ai_agent ;;
+    agent)             build_agent ;;
     frontend)          build_frontend ;;
     docker)            build_docker ;;
     chart)             push_chart ;;

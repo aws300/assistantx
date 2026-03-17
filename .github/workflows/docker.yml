@@ -1,0 +1,62 @@
+name: Build and push Docker images to ECR
+
+on:
+  push:
+    tags:
+      - docker*
+
+env:
+  AWS_ACCOUNT_ID: 867344450900
+  AWS_REGION: us-west-2
+  ECR_PUBLIC_REGISTRY: public.ecr.aws/b1y9i2f3
+  ECR_PUBLIC_IMAGE: public.ecr.aws/b1y9i2f3/cnf
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GithubActionsRole
+          aws-region: us-east-1   # ECR public requires us-east-1 for auth
+
+      - name: Login to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Install buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: latest
+
+      - name: Generate protobuf
+        run: make -C protos
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build and push backend image
+        run: |
+          IMAGE="${{ env.ECR_PUBLIC_IMAGE }}:backend"
+          docker build -t "$IMAGE" backend/
+          docker push "$IMAGE"
+
+      - name: Build and push frontend image
+        run: |
+          IMAGE="${{ env.ECR_PUBLIC_IMAGE }}:frontend"
+          docker build -t "$IMAGE" frontend/
+          docker push "$IMAGE"

@@ -898,3 +898,32 @@ rag_queries:
       success: "${answer}"
       not_found: "抱歉，我在手册中没有找到相关信息"
       error: "查询出错，请稍后重试"
+
+  # ── Session Control ──────────────────────────────────────────
+  - id: session.exit
+    category: session
+    name: "退出会话"
+    description: "结束当前语音会话，断开连接"
+    triggers:
+      - "关闭"
+      - "退出"
+      - "退下"
+      - "再见"
+      - "拜拜"
+      - "结束对话"
+      - "结束会话"
+      - "断开连接"
+      - "关闭语音助手"
+      - "退出语音"
+      - "不用了"
+      - "没事了"
+      - "好了"
+      - "quit"
+      - "exit"
+      - "bye"
+    parameters: []
+    action:
+      id: "session.disconnect"
+      payload_template: {}
+    responses:
+      success: "好的，再见"

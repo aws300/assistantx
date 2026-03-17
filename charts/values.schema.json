@@ -27,27 +27,22 @@
         "enabled": {
           "type": "boolean"
         },
-        "backendLang": {
-          "type": "string",
-          "enum": ["go", "python"],
-          "description": "Backend implementation to deploy: 'go' uses image.backend, 'python' uses image.aiAgent"
-        },
         "image": {
           "type": "object",
           "properties": {
             "backend": {
               "type": "string",
               "minLength": 1,
-              "description": "Full image reference for the Go backend container, e.g. public.ecr.aws/b1y9i2f3/cnf:backend"
+              "description": "Go backend image, e.g. public.ecr.aws/b1y9i2f3/assistantx:backend"
             },
-            "aiAgent": {
+            "agent": {
               "type": "string",
-              "description": "Full image reference for the Python backend container, e.g. public.ecr.aws/b1y9i2f3/cnf:backend-py"
+              "description": "Python LiveKit agent image, e.g. public.ecr.aws/b1y9i2f3/assistantx:agent"
             },
             "frontend": {
               "type": "string",
               "minLength": 1,
-              "description": "Full image reference for the frontend container, e.g. public.ecr.aws/b1y9i2f3/cnf:frontend"
+              "description": "SolidJS frontend image, e.g. public.ecr.aws/b1y9i2f3/assistantx:frontend"
             }
           }
         },

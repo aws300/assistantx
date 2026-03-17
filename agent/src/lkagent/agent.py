@@ -670,16 +670,26 @@ def setup_data_listener(room: rtc.Room, session: AgentSession):
             message = json.loads(payload)
             logger.info(f"Received data from client: {message}")
 
-            # Handle text input
+            text = None
+
+            # Format 1: publishData direct format {"type": "text_input", "text": "..."}
             if message.get('type') == 'text_input':
                 text = message.get('text', '')
-                if text:
-                    asyncio.create_task(handle_text_input(session, text))
+
+            # Format 2: useChat().send() format {"message": "...", "ignoreLegacy": true, ...}
+            # This is the LiveKit text stream protocol used by @livekit/components-react useChat
+            elif 'message' in message:
+                text = message.get('message', '')
+
+            if text and text.strip():
+                logger.info(f"Processing text input: '{text}'")
+                asyncio.create_task(handle_text_input(session, text.strip()))
+
         except Exception as e:
             logger.error(f"Error processing data message: {e}")
 
     room.on("data_received", on_data_received)
-    logger.info("Data channel listener set up for text input")
+    logger.info("Data channel listener set up for text input (publishData + useChat formats)")
 
 
 def setup_audio_toggle_rpc(room: rtc.Room, session: AgentSession):

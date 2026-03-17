@@ -532,7 +532,7 @@ const SeatControlPanel: Component<{
     {/* Heating */}
     <div class="mb-3">
       <div class="flex items-center gap-1 mb-2">
-        <Icon name="local_fire_department" size="xs" class="text-orange-500" />
+        <Icon name="local_fire_department" size="xs" class="text-primary" />
         <span class="text-xs text-gray-500">加热</span>
       </div>
       <div class="flex gap-1">
@@ -543,7 +543,7 @@ const SeatControlPanel: Component<{
               class={cn(
                 'flex-1 h-8 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer',
                 props.heating === level
-                  ? 'bg-orange-500 text-white'
+                  ? 'bg-primary text-white'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
               )}
             >
@@ -557,7 +557,7 @@ const SeatControlPanel: Component<{
     {/* Cooling */}
     <div>
       <div class="flex items-center gap-1 mb-2">
-        <Icon name="air" size="xs" class="text-cyan-500" />
+        <Icon name="air" size="xs" class="text-primary" />
         <span class="text-xs text-gray-500">通风</span>
       </div>
       <div class="flex gap-1">
@@ -568,7 +568,7 @@ const SeatControlPanel: Component<{
               class={cn(
                 'flex-1 h-8 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer',
                 props.cooling === level
-                  ? 'bg-cyan-500 text-white'
+                  ? 'bg-primary text-white'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
               )}
             >

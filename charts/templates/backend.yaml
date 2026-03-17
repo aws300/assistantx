@@ -1,8 +1,3 @@
-{{- $backendLang := .Values.assistantx.backendLang | default "go" }}
-{{- $backendImage := .Values.assistantx.image.backend }}
-{{- if and (eq $backendLang "python") .Values.assistantx.image.aiAgent }}
-{{- $backendImage = .Values.assistantx.image.aiAgent }}
-{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,7 +50,7 @@ spec:
       {{- end }}
       containers:
         - name: assistantx-backend
-          image: {{ $backendImage }}
+          image: {{ .Values.assistantx.image.backend }}
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
