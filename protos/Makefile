@@ -26,8 +26,7 @@ gen-python: clean-python
 			-I$(PROTO_DIR) \
 			--python_out=$(PY_OUT) \
 			--grpc_python_out=$(PY_OUT) \
-			auth/v1/auth.proto \
-			irsa/v1/irsa.proto; \
+			auth/v1/auth.proto; \
 	else \
 		echo "grpcio-tools not found, trying buf BSR plugins (requires internet)..."; \
 		PATH="$$PATH:/home/core/go/bin" buf generate --template buf.gen.python.yaml; \

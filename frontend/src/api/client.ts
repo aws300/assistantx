@@ -3,7 +3,6 @@ import { createConnectTransport } from '@connectrpc/connect-web';
 import type { Interceptor } from '@connectrpc/connect';
 import { BACKEND_URL, CONNECT_PROTOCOL } from '../config';
 import { AuthService } from '../gen/auth/v1/auth_pb';
-import { IRSAService } from '../gen/irsa/v1/irsa_pb';
 import { LivekitService } from '../gen/livekit/v1/livekit_pb';
 import { guestMode } from '../stores/auth';
 
@@ -66,11 +65,6 @@ const transport = createConnectTransport({
  * All methods are available as `authClient.methodName(request)`.
  */
 export const authClient = createClient(AuthService, transport);
-
-/**
- * Typed ConnectRPC client for IRSAService.
- */
-export const irsaClient = createClient(IRSAService, transport);
 
 /**
  * Typed ConnectRPC client for LivekitService.

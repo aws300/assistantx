@@ -6,11 +6,7 @@ version: v2
 # Usage:
 #   cd protos && make gen-python
 #
-# Output: ../agent/src/authspa/generated/{auth,irsa}/v1/
-#
-# The generated files are imported via import bridges:
-#   src/auth/v1/__init__.py  → authspa/generated/auth/v1/
-#   src/irsa/v1/__init__.py  → authspa/generated/irsa/v1/
+# Output: ../agent/src/authspa/generated/auth/v1/
 
 plugins:
   # Python: protobuf message types (_pb2.py)
