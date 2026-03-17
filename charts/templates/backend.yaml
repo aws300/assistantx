@@ -8,7 +8,7 @@ data:
       auth: {{ .Values.assistantx.config.auth | quote }}
     {{- if .Values.assistantx.config.livekit }}
     livekit:
-      url: {{ .Values.assistantx.config.livekit.url | default "" | quote }}
+      url: {{ printf "wss://%s:7883" .Values.assistantx.host.backend | quote }}
       apiKey: {{ .Values.assistantx.config.livekit.apiKey | default "" | quote }}
       apiSecret: {{ .Values.assistantx.config.livekit.apiSecret | default "" | quote }}
       agentName: {{ .Values.assistantx.config.livekit.agentName | default "Assistant" | quote }}

@@ -16,7 +16,7 @@ assistantx:
   config:
     auth: "oidc://u5HewIf9_gccM3O5Q-nwAA:@account.nx.run?scope=offline%20profile%20%20email%20%20openid"
     livekit:
-      url: "wss://livekit.nx.run"
+      # url is derived automatically as wss://<host.backend>:7883
       apiKey: "REDACTED-LIVEKIT-API-KEY"
       apiSecret: "REDACTED-LIVEKIT-API-SECRET"
       agentName: "AssistantX"
@@ -49,4 +49,15 @@ assistantx:
   # irsaRoleArn: when set, creates a ServiceAccount annotated with eks.amazonaws.com/role-arn
   # and binds it to the backend Deployment for IRSA credential injection.
   irsaRoleArn: "arn:aws:iam::867344450900:role/NxlabsEKS_JumpRole"
+
+  # livekitServer: deploy LiveKit server in-cluster (disabled by default).
+  # When enabled, uses config.livekit.apiKey/apiSecret for the server keys.
+  # Ports:
+  #   :7883 WSS signaling  — Envoy HTTPS listener (you configure)
+  #   :7881 WebRTC TCP     — Envoy TCP listener   (you configure)
+  livekitServer:
+    image: livekit/livekit-server:v1.9
+    # nodeIp: Global Accelerator IP advertised in WebRTC ICE TCP candidates.
+    # Clients connect to this IP:7881 for media — must match the TCP listener.
+    nodeIp: "166.117.138.22"
 

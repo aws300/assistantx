@@ -6,7 +6,7 @@ metadata:
 data:
   config.yaml: |
     livekit:
-      url: {{ .Values.assistantx.config.livekit.url | quote }}
+      url: {{ printf "wss://%s:7883" .Values.assistantx.host.backend | quote }}
       api_key: {{ .Values.assistantx.config.livekit.apiKey | quote }}
       api_secret: {{ .Values.assistantx.config.livekit.apiSecret | quote }}
     voice_mode: {{ .Values.assistantx.config.livekit.voiceMode | default "realtime" | quote }}

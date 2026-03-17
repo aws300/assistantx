@@ -1,0 +1,154 @@
+{{- $cfg := .Values.assistantx.config.livekit }}
+{{- $srv := .Values.assistantx.livekitServer }}
+# ============================================================
+# LiveKit Server — in-cluster deployment
+#
+# Ports:
+#   7880  WebSocket signaling  (plain ws://, TLS terminated by Envoy on :7883)
+#   7881  WebRTC TCP media     (raw TCP, Envoy TCPRoute passthrough on :7881)
+#
+# Envoy Gateway — you must add these two Listeners manually:
+#   - name: livekit-wss
+#     port: 7883
+#     protocol: HTTPS
+#     tls:
+#       mode: Terminate
+#       certificateRefs: [<same cert as :443>]
+#
+#   - name: livekit-tcp
+#     port: 7881
+#     protocol: TCP
+# ============================================================
+
+# ── ConfigMap ─────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assistantx-livekit-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    port: 7880
+    rtc:
+      tcp_port: 7881
+      use_external_ip: false
+      {{- if $srv.nodeIp }}
+      node_ip: {{ $srv.nodeIp | quote }}
+      {{- end }}
+    keys:
+      {{ $cfg.apiKey }}: {{ $cfg.apiSecret }}
+    logging:
+      level: info
+      pion_level: error
+
+---
+# ── Deployment ────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistantx-livekit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: assistantx-livekit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assistantx-livekit
+  template:
+    metadata:
+      labels:
+        app: assistantx-livekit
+    spec:
+      containers:
+        - name: livekit
+          image: {{ $srv.image | default "livekit/livekit-server:v1.9" }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/etc/livekit/config.yaml
+          ports:
+            - name: signaling
+              containerPort: 7880
+              protocol: TCP
+            - name: rtc-tcp
+              containerPort: 7881
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7880
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit
+      volumes:
+        - name: config
+          configMap:
+            name: assistantx-livekit-config
+
+---
+# ── Service ───────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: assistantx-livekit
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: assistantx-livekit
+  ports:
+    - name: signaling
+      port: 7880
+      targetPort: 7880
+      protocol: TCP
+    - name: rtc-tcp
+      port: 7881
+      targetPort: 7881
+      protocol: TCP
+
+---
+# ── HTTPRoute: Envoy :7883 (HTTPS/WSS) → LiveKit :7880 (plain ws) ─────────
+# Uses Gateway listener: { name: https-7883, port: 7883, protocol: HTTPS }
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: assistantx-livekit-wss
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.global.gateway }}
+      namespace: {{ .Values.global.gatewayNamespace }}
+      sectionName: https-7883
+  hostnames:
+    - {{ .Values.assistantx.host.backend | quote }}
+  rules:
+    - backendRefs:
+        - name: assistantx-livekit
+          port: 7880
+
+---
+# ── TCPRoute: Envoy :7881 (TCP passthrough) → LiveKit :7881 ───────────────
+# Uses Gateway listener: { name: tcp-7881, port: 7881, protocol: TCP }
+# External port == internal tcp_port so ICE candidates resolve correctly.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: assistantx-livekit-tcp
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.global.gateway }}
+      namespace: {{ .Values.global.gatewayNamespace }}
+      sectionName: tcp-7881
+  rules:
+    - backendRefs:
+        - name: assistantx-livekit
+          port: 7881
