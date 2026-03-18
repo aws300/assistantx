@@ -1151,13 +1151,13 @@ Resources:
             pl=PLURALS.get(kind,kind.lower()+"s")
             px=f"apis/{av}" if "/" in av else f"api/{av}"
             return f"/{px}/namespaces/{ns}/{pl}" if ns else f"/{px}/{pl}"
-          def k8s_apply(http,ep,token,m,retries=20):
+          def k8s_apply(http,ep,token,m,retries=40):
             av=m.get("apiVersion","");kind=m.get("kind","");md=m.get("metadata",{})
             name=md.get("name","");ns=md.get("namespace")
             p=rpath(av,kind,ns)
             hd={"Authorization":f"Bearer {token}","Content-Type":"application/json","Accept":"application/json"}
             b=json.dumps(m).encode()
-            # Retry on 422 (CRD schema not yet established) with backoff
+            last_status=0;last_body={}
             for attempt in range(retries):
               if not has_time(120):break
               r=http.request("POST",f"{ep}{p}",headers=hd,body=b)
@@ -1165,15 +1165,16 @@ Resources:
                 hd["Content-Type"]="application/merge-patch+json"
                 r=http.request("PATCH",f"{ep}{p}/{name}",headers=hd,body=b)
                 return "updated",r.status,json.loads(r.data.decode()) if r.data else {}
-              if r.status==422 and attempt<retries-1:
-                wait=min(30,5*(attempt+1))
-                if attempt==0:
-                  try:L.warning(f"422 body: {r.data.decode()[:500]}")
-                  except:pass
-                L.warning(f"422 on {kind}/{name}, retry {attempt+1}/{retries-1} in {wait}s")
-                time.sleep(wait);continue
-              return("created" if 200<=r.status<300 else "error"),r.status,json.loads(r.data.decode()) if r.data else {}
-            return "error",422,{}
+              if 200<=r.status<300:
+                return "created",r.status,json.loads(r.data.decode()) if r.data else {}
+              last_status=r.status
+              try:last_body=json.loads(r.data.decode()) if r.data else {}
+              except:last_body={"raw":r.data.decode()[:500] if r.data else ""}
+              if attempt==0:L.warning(f"{r.status} body: {str(last_body)[:500]}")
+              wait=min(30,5*(attempt+1))
+              L.warning(f"{r.status} on {kind}/{name}, retry {attempt+1}/{retries} in {wait}s")
+              time.sleep(wait)
+            return "error",last_status,last_body
           def k8s_delete(http,ep,token,m):
             av=m.get("apiVersion","");kind=m.get("kind","");md=m.get("metadata",{})
             name=md.get("name","");ns=md.get("namespace")
@@ -1296,13 +1297,9 @@ Resources:
                   lbl=f"{m.get('kind')}/{m.get('metadata',{}).get('name')}"
                   L.info(f"{a} {lbl} HTTP {s}")
                   results.append({"r":lbl,"a":a,"s":s})
-                  if a=="error":L.error(f"Error on {lbl}: {json.dumps(d)}")
+                  if a=="error":L.error(f"Error on {lbl}: {json.dumps(d)[:500]}")
               errs=[r for r in results if r["a"]=="error"]
               if errs:
-                # If all manifests failed with 422, likely API not ready - reinvoke
-                all_422=[r for r in errs if r["s"]==422]
-                if all_422 and len(all_422)==len(errs):
-                  reinvoke_or_fail(event,ctx,f"All {len(errs)} manifests got 422, API not ready");return
                 send_cfn(event,ctx,"FAILED",reason=json.dumps(errs[:3])[:256]);return
               env_id=props.get("EnvironmentId",cn.split("-")[-1] if "-" in cn else "001")
               ns_val=props.get("Namespace",f"cnf-{env_id}")
@@ -1573,17 +1570,21 @@ Resources:
             px=f"apis/{av}" if "/" in av else f"api/{av}"
             if kind in NONNS or not ns:return f"/{px}/{pl}"
             return f"/{px}/namespaces/{ns}/{pl}"
-          def apply_yaml_doc(http,ep,token,doc,av,kind,name,ns):
-            """Apply a single YAML document to K8s API using server-side apply."""
+          def apply_yaml_doc(http,ep,token,doc,av,kind,name,ns,retries=40):
+            """Apply a single YAML document to K8s API with retry."""
             p=rpath(av,kind,ns)
             hd={"Authorization":f"Bearer {token}","Content-Type":"application/yaml","Accept":"application/json"}
-            r=http.request("POST",f"{ep}{p}",headers=hd,body=doc.encode("utf-8"),timeout=30)
-            if r.status in(409,422):
-              # Use server-side apply (PATCH with fieldManager)
-              hd["Content-Type"]="application/apply-patch+yaml"
-              r=http.request("PATCH",f"{ep}{p}/{name}?fieldManager=cfn&force=true",headers=hd,body=doc.encode("utf-8"),timeout=30)
-              return "updated",r.status
-            return("created" if 200<=r.status<300 else "error"),r.status
+            for attempt in range(retries):
+              r=http.request("POST",f"{ep}{p}",headers=hd,body=doc.encode("utf-8"),timeout=30)
+              if r.status in(409,422):
+                hd2={**hd,"Content-Type":"application/apply-patch+yaml"}
+                r=http.request("PATCH",f"{ep}{p}/{name}?fieldManager=cfn&force=true",headers=hd2,body=doc.encode("utf-8"),timeout=30)
+                if 200<=r.status<300:return "updated",r.status
+              if 200<=r.status<300:return "created",r.status
+              wait=min(30,5*(attempt+1))
+              L.warning(f"{r.status} on {kind}/{name}, retry {attempt+1}/{retries} in {wait}s")
+              time.sleep(wait)
+            return "error",r.status
           def send_cfn(event,ctx,status,data=None,reason=None,pid=None):
             body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}","PhysicalResourceId":pid or event.get("PhysicalResourceId",ctx.log_stream_name),"StackId":event["StackId"],"RequestId":event["RequestId"],"LogicalResourceId":event["LogicalResourceId"],"Data":data or {}})
             urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
