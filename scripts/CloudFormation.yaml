@@ -152,7 +152,7 @@ Resources:
                   - lambda:GetFunction
                   - cognito-idp:DescribeUserPoolDomain
                   - sts:GetCallerIdentity
-                  - service-quotas:GetServiceQuota
+                  - servicequotas:GetServiceQuota
                   - elasticfilesystem:CreateMountTarget
                   - elasticfilesystem:DeleteMountTarget
                   - elasticfilesystem:DescribeMountTargets
@@ -2559,6 +2559,15 @@ Resources:
         assistantx.irsaRoleArn: !GetAtt PodRole.Arn
         assistantx.livekitServer.nodeIp: !Select [0, !GetAtt GlobalAccelerator.Ipv4Addresses]
         global.httpsListenerName: "https-ga"
+        assistantx.config.livekit.voiceMode: "realtime"
+        assistantx.config.livekit.novaSonic.modelVersion: "nova-sonic-2"
+        assistantx.config.livekit.novaSonic.region: "ap-northeast-1"
+        assistantx.config.livekit.llm.provider: "bedrock"
+        assistantx.config.livekit.llm.model: "bedrock/global.anthropic.claude-sonnet-4-6"
+        assistantx.config.livekit.llm.region: "ap-southeast-1"
+        assistantx.config.livekit.knowledgeBase.id: "YOUR_KB_ID"
+        assistantx.config.livekit.knowledgeBase.region: "ap-southeast-1"
+        assistantx.config.livekit.knowledgeBase.description: "YOUR_KB_DESCRIPTION"
 
   # ============================================================================
   # SECTION 10.1: GA HTTPS RESOURCES (Certificate + Listener + Route)
