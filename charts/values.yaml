@@ -61,7 +61,7 @@ assistantx:
   #   :7881 WebRTC TCP     — Envoy TCP listener   (you configure)
   livekitServer:
     image: livekit/livekit-server:v1.9
-    # nodeIp: Global Accelerator IP advertised in WebRTC ICE TCP candidates.
-    # Clients connect to this IP:7881 for media — must match the TCP listener.
+    # nodeIp: external IP advertised in WebRTC ICE TCP candidates (NAT 1:1 mapping).
+    # Set to the LoadBalancer/Global Accelerator IPv4 address reachable on :7881.
     nodeIp: "166.117.138.22"
 

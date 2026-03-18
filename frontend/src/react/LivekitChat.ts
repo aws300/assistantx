@@ -419,7 +419,13 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
       const token = (resp as any).participantToken || (resp as any).token;
       if (!token) throw new Error('No token received');
 
-      await r.connect((resp as any).serverUrl, token);
+      // Pass empty iceServers so livekit-client does NOT use the server's JoinResponse
+      // ICE servers, which may contain invalid URLs (stun:host:port/path) that browsers
+      // reject with "ICE server parsing failed: Invalid port".
+      // The TCP ICE candidate from LiveKit's node_ip still works via signaling.
+      await r.connect((resp as any).serverUrl, token, {
+        rtcConfig: { iceServers: [] },
+      });
 
       try { await r.localParticipant.setMicrophoneEnabled(true); }
       catch (e) { console.warn('[LivekitChat] Mic enable failed:', e); }

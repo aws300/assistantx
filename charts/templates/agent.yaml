@@ -6,7 +6,9 @@ metadata:
 data:
   config.yaml: |
     livekit:
-      url: {{ printf "wss://%s:7883" .Values.assistantx.host.backend | quote }}
+      # Agent connects to LiveKit via internal cluster service to avoid problematic
+      # ICE server URLs (stun:host:port/path) generated when going through Envoy.
+      url: "ws://assistantx-livekit:7880"
       api_key: {{ .Values.assistantx.config.livekit.apiKey | quote }}
       api_secret: {{ .Values.assistantx.config.livekit.apiSecret | quote }}
     voice_mode: {{ .Values.assistantx.config.livekit.voiceMode | default "realtime" | quote }}

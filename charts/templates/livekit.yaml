@@ -32,6 +32,7 @@ data:
     rtc:
       tcp_port: 7881
       use_external_ip: false
+      stun_servers: []
       {{- if $srv.nodeIp }}
       node_ip: {{ $srv.nodeIp | quote }}
       {{- end }}
