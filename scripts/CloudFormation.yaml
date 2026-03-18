@@ -20,6 +20,7 @@ Metadata:
           default: "Network Configuration"
         Parameters:
           - VpcCidr
+          - AZCount
       - Label:
           default: "EKS Configuration"
         Parameters:
@@ -39,6 +40,8 @@ Metadata:
         default: "Kubernetes Version"
       EnvoyGatewayVersion:
         default: "EnvoyGateway Version"
+      AZCount:
+        default: "Number of Availability Zones"
 
 # ==============================================================================
 # PARAMETERS
@@ -49,7 +52,7 @@ Parameters:
     Description: "Project name prefix for all resources (e.g. CloudNativeFormation, ProjectCNF)"
     AllowedPattern: "^[a-zA-Z][a-zA-Z0-9]{0,19}$"
     ConstraintDescription: "Must start with a letter, 1-20 alphanumeric characters"
-    Default: "CloudNativeFormation"
+    Default: "AssistantX"
   EnvironmentId:
     Type: String
     Description: "Unique identifier appended to all resource names (e.g. 001, dev, prod)"
@@ -74,8 +77,14 @@ Parameters:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
     Default: ""
+  AZCount:
+    Type: String
+    Description: "Number of Availability Zones (set to 2 for regions like us-west-1 with only 2 AZs)"
+    Default: "2"
+    AllowedValues: ["2", "3"]
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
+  Has3AZs: !Not [!Equals [!Ref AZCount, "2"]]
 
 # ==============================================================================
 # MAPPINGS
@@ -358,6 +367,7 @@ Resources:
 
   EipNatC:
     Type: AWS::EC2::EIP
+    Condition: Has3AZs
     DependsOn: QuotaCheck
     Properties:
       Domain: vpc
@@ -398,6 +408,7 @@ Resources:
 
   PublicSubnetC:
     Type: AWS::EC2::Subnet
+    Condition: Has3AZs
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
@@ -446,6 +457,7 @@ Resources:
 
   PrivateSubnetC:
     Type: AWS::EC2::Subnet
+    Condition: Has3AZs
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
@@ -483,6 +495,7 @@ Resources:
 
   NatGatewayC:
     Type: AWS::EC2::NatGateway
+    Condition: Has3AZs
     DependsOn: IGWAttachment
     Properties:
       AllocationId: !GetAtt EipNatC.AllocationId
@@ -530,6 +543,7 @@ Resources:
 
   PublicSubnetCRouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: Has3AZs
     Properties:
       SubnetId: !Ref PublicSubnetC
       RouteTableId: !Ref PublicRouteTable
@@ -593,6 +607,7 @@ Resources:
 
   PrivateRouteTableC:
     Type: AWS::EC2::RouteTable
+    Condition: Has3AZs
     Properties:
       VpcId: !Ref VPC
       Tags:
@@ -601,6 +616,7 @@ Resources:
 
   PrivateRouteC:
     Type: AWS::EC2::Route
+    Condition: Has3AZs
     Properties:
       RouteTableId: !Ref PrivateRouteTableC
       DestinationCidrBlock: "0.0.0.0/0"
@@ -608,6 +624,7 @@ Resources:
 
   PrivateRouteC6:
     Type: AWS::EC2::Route
+    Condition: Has3AZs
     Properties:
       RouteTableId: !Ref PrivateRouteTableC
       DestinationIpv6CidrBlock: "::/0"
@@ -615,6 +632,7 @@ Resources:
 
   PrivateSubnetCRouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: Has3AZs
     Properties:
       SubnetId: !Ref PrivateSubnetC
       RouteTableId: !Ref PrivateRouteTableC
@@ -629,7 +647,7 @@ Resources:
       RouteTableIds:
         - !Ref PrivateRouteTableA
         - !Ref PrivateRouteTableB
-        - !Ref PrivateRouteTableC
+        - !If [Has3AZs, !Ref PrivateRouteTableC, !Ref "AWS::NoValue"]
 
   # ============================================================================
   # SECTION 2: IAM ROLES
@@ -807,13 +825,10 @@ Resources:
     DependsOn:
       - PrivateSubnetARouteAssoc
       - PrivateSubnetBRouteAssoc
-      - PrivateSubnetCRouteAssoc
       - PublicSubnetARouteAssoc
       - PublicSubnetBRouteAssoc
-      - PublicSubnetCRouteAssoc
       - NatGatewayA
       - NatGatewayB
-      - NatGatewayC
       - S3Endpoint
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}"
@@ -838,7 +853,7 @@ Resources:
         SubnetIds:
           - !Ref PrivateSubnetA
           - !Ref PrivateSubnetB
-          - !Ref PrivateSubnetC
+          - !If [Has3AZs, !Ref PrivateSubnetC, !Ref "AWS::NoValue"]
         EndpointPublicAccess: true
         EndpointPrivateAccess: true
         PublicAccessCidrs:
@@ -924,6 +939,7 @@ Resources:
 
   EfsMountTargetC:
     Type: AWS::EFS::MountTarget
+    Condition: Has3AZs
     Properties:
       FileSystemId: !Ref EfsFileSystem
       SubnetId: !Ref PrivateSubnetC
