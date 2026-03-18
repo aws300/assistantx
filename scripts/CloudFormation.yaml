@@ -20,7 +20,6 @@ Metadata:
           default: "Network Configuration"
         Parameters:
           - VpcCidr
-          - AZCount
       - Label:
           default: "EKS Configuration"
         Parameters:
@@ -40,8 +39,6 @@ Metadata:
         default: "Kubernetes Version"
       EnvoyGatewayVersion:
         default: "EnvoyGateway Version"
-      AZCount:
-        default: "Number of Availability Zones"
 
 # ==============================================================================
 # PARAMETERS
@@ -77,14 +74,8 @@ Parameters:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
     Default: ""
-  AZCount:
-    Type: String
-    Description: "Number of Availability Zones (set to 2 for regions like us-west-1 with only 2 AZs)"
-    Default: "2"
-    AllowedValues: ["2", "3"]
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
-  Has3AZs: !Not [!Equals [!Ref AZCount, "2"]]
 
 # ==============================================================================
 # MAPPINGS
@@ -151,6 +142,7 @@ Resources:
                 Action:
                   - ec2:DescribeAddresses
                   - ec2:DescribeAccountAttributes
+                  - ec2:DescribeAvailabilityZones
                   - ec2:DescribeVpcs
                   - ec2:DescribeNatGateways
                   - ec2:DescribeSubnets
@@ -161,6 +153,9 @@ Resources:
                   - cognito-idp:DescribeUserPoolDomain
                   - sts:GetCallerIdentity
                   - service-quotas:GetServiceQuota
+                  - elasticfilesystem:CreateMountTarget
+                  - elasticfilesystem:DeleteMountTarget
+                  - elasticfilesystem:DescribeMountTargets
                 Resource: "*"
 
   QuotaCheckFunction:
@@ -169,10 +164,11 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt QuotaCheckRole.Arn
-      Timeout: 60
+      Timeout: 120
       Code:
         ZipFile: |
-          import boto3, json, urllib.request
+          import boto3, json, logging, time, urllib.request
+          L=logging.getLogger();L.setLevel(logging.INFO)
           def handler(event, context):
             def send(status, data={}, reason=''):
               body = json.dumps({
@@ -188,10 +184,61 @@ Resources:
                 event['ResponseURL'], data=body,
                 headers={'Content-Type': '', 'Content-Length': len(body)}, method='PUT')
               urllib.request.urlopen(req)
-            if event['RequestType'] in ('Delete', 'Update'):
-              return send('SUCCESS')
+            lid = event['LogicalResourceId']
+            rt = event['RequestType']
             p = event['ResourceProperties']
-            pn, eid, region = p['ProjectName'], p['EnvironmentId'], p['Region']
+            region = p.get('Region', boto3.session.Session().region_name)
+
+            # --- EfsMountTargets handler ---
+            if lid == 'EfsMountTargets':
+              efs = boto3.client('efs', region_name=region)
+              fsid = p['FileSystemId']
+              if rt == 'Delete':
+                try:
+                  for mt in efs.describe_mount_targets(FileSystemId=fsid)['MountTargets']:
+                    efs.delete_mount_target(MountTargetId=mt['MountTargetId'])
+                  L.info("Deleted all mount targets")
+                except Exception as e:
+                  L.warning(f"Delete cleanup: {e}")
+                return send('SUCCESS')
+              # Create/Update: ensure mount targets exist for each unique-AZ subnet
+              try:
+                subnet_ids = p['SubnetIds']
+                sg = p['SecurityGroupId']
+                if isinstance(subnet_ids, str): subnet_ids = subnet_ids.split(',')
+                # Deduplicate by AZ
+                ec2 = boto3.client('ec2', region_name=region)
+                subs = ec2.describe_subnets(SubnetIds=subnet_ids)['Subnets']
+                seen_az = {}
+                for s in subs:
+                  az = s['AvailabilityZone']
+                  if az not in seen_az: seen_az[az] = s['SubnetId']
+                # Get existing mount targets
+                existing = {mt['AvailabilityZoneName']: mt['MountTargetId']
+                            for mt in efs.describe_mount_targets(FileSystemId=fsid)['MountTargets']}
+                created = []
+                for az, sid in seen_az.items():
+                  if az not in existing:
+                    efs.create_mount_target(FileSystemId=fsid, SubnetId=sid, SecurityGroups=[sg])
+                    created.append(az)
+                    L.info(f"Created mount target in {az} ({sid})")
+                  else:
+                    L.info(f"Mount target already exists in {az}")
+                # Wait for all mount targets to become available
+                for _ in range(30):
+                  mts = efs.describe_mount_targets(FileSystemId=fsid)['MountTargets']
+                  if all(mt['LifeCycleState'] == 'available' for mt in mts): break
+                  time.sleep(5)
+                send('SUCCESS', {'Count': str(len(seen_az)), 'AZs': ','.join(sorted(seen_az.keys()))})
+              except Exception as e:
+                L.exception("EfsMountTargets failed")
+                send('FAILED', reason=str(e)[:256])
+              return
+
+            # --- QuotaCheck handler ---
+            if rt in ('Delete', 'Update'):
+              return send('SUCCESS')
+            pn, eid = p['ProjectName'], p['EnvironmentId']
             prefix = pn + eid
             errors = []
             ec2 = boto3.client('ec2', region_name=region)
@@ -199,8 +246,7 @@ Resources:
             # EIP quota
             try:
               used = len(ec2.describe_addresses()['Addresses'])
-              try: limit = int(sq.get_service_quota(ServiceCode='ec2', QuotaCode='L-0263D0A3')['Quota']['Value'])
-              except: limit = 5
+              limit = int(sq.get_service_quota(ServiceCode='ec2', QuotaCode='L-0263D0A3')['Quota']['Value'])
               if limit - used < 3:
                 errors.append(f"EIP: need 3 more, only {limit-used} free ({used}/{limit}). "
                               "Increase quota: Service Quotas > EC2 > EC2-VPC Elastic IPs (L-0263D0A3).")
@@ -209,8 +255,7 @@ Resources:
             # VPC quota
             try:
               used = len(ec2.describe_vpcs()['Vpcs'])
-              try: limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-F678F1CE')['Quota']['Value'])
-              except: limit = 5
+              limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-F678F1CE')['Quota']['Value'])
               if limit - used < 1:
                 errors.append(f"VPC: {used}/{int(limit)} used, no capacity. "
                               "Increase quota: Service Quotas > VPC > VPCs per Region (L-F678F1CE).")
@@ -218,8 +263,7 @@ Resources:
               errors.append(f"VPC check error: {e}")
             # NAT Gateway quota per AZ
             try:
-              try: nat_limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-FE5A380F')['Quota']['Value'])
-              except: nat_limit = 5
+              nat_limit = int(sq.get_service_quota(ServiceCode='vpc', QuotaCode='L-FE5A380F')['Quota']['Value'])
               nats, token = [], None
               while True:
                 kw = {'Filter': [{'Name': 'state', 'Values': ['available', 'pending']}]}
@@ -292,11 +336,20 @@ Resources:
                 errors.append(f"Cognito domain '{domain}' already exists. Use a different EnvironmentId.")
             except Exception:
               pass
+            # Detect AZs
+            try:
+              azs = sorted([z['ZoneName'] for z in ec2.describe_availability_zones(
+                Filters=[{'Name': 'state', 'Values': ['available']}])['AvailabilityZones']])
+              az1, az2 = azs[0], azs[1]
+              az3 = azs[2] if len(azs) >= 3 else azs[0]
+            except Exception as e:
+              errors.append(f"AZ detection error: {e}")
+              az1 = az2 = az3 = ""
             # Result
             if errors:
               return send('FAILED', {},
                 f"PRE-FLIGHT CHECK FAILED ({len(errors)} issue(s)): " + " | ".join(errors))
-            send('SUCCESS', {'Message': 'All quota and conflict checks passed.'})
+            send('SUCCESS', {'Message': 'All checks passed.', 'AZ1': az1, 'AZ2': az2, 'AZ3': az3})
 
   QuotaCheck:
     Type: Custom::QuotaCheck
@@ -367,7 +420,6 @@ Resources:
 
   EipNatC:
     Type: AWS::EC2::EIP
-    Condition: Has3AZs
     DependsOn: QuotaCheck
     Properties:
       Domain: vpc
@@ -381,7 +433,7 @@ Resources:
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ1
       CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       MapPublicIpOnLaunch: false
@@ -396,7 +448,7 @@ Resources:
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [1, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ2
       CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [1, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       MapPublicIpOnLaunch: false
@@ -408,11 +460,10 @@ Resources:
 
   PublicSubnetC:
     Type: AWS::EC2::Subnet
-    Condition: Has3AZs
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [2, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ3
       CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [2, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       MapPublicIpOnLaunch: false
@@ -428,7 +479,7 @@ Resources:
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ1
       CidrBlock: !Select [8, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [3, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       AssignIpv6AddressOnCreation: true
@@ -444,7 +495,7 @@ Resources:
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [1, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ2
       CidrBlock: !Select [9, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [4, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       AssignIpv6AddressOnCreation: true
@@ -457,11 +508,10 @@ Resources:
 
   PrivateSubnetC:
     Type: AWS::EC2::Subnet
-    Condition: Has3AZs
     DependsOn: IPv6CidrBlock
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [2, !GetAZs ""]
+      AvailabilityZone: !GetAtt QuotaCheck.AZ3
       CidrBlock: !Select [10, !Cidr [!Ref VpcCidr, 16, "12"]]
       Ipv6CidrBlock: !Select [5, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 8, "64"]]
       AssignIpv6AddressOnCreation: true
@@ -495,7 +545,6 @@ Resources:
 
   NatGatewayC:
     Type: AWS::EC2::NatGateway
-    Condition: Has3AZs
     DependsOn: IGWAttachment
     Properties:
       AllocationId: !GetAtt EipNatC.AllocationId
@@ -543,7 +592,6 @@ Resources:
 
   PublicSubnetCRouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: Has3AZs
     Properties:
       SubnetId: !Ref PublicSubnetC
       RouteTableId: !Ref PublicRouteTable
@@ -607,7 +655,6 @@ Resources:
 
   PrivateRouteTableC:
     Type: AWS::EC2::RouteTable
-    Condition: Has3AZs
     Properties:
       VpcId: !Ref VPC
       Tags:
@@ -616,7 +663,6 @@ Resources:
 
   PrivateRouteC:
     Type: AWS::EC2::Route
-    Condition: Has3AZs
     Properties:
       RouteTableId: !Ref PrivateRouteTableC
       DestinationCidrBlock: "0.0.0.0/0"
@@ -624,7 +670,6 @@ Resources:
 
   PrivateRouteC6:
     Type: AWS::EC2::Route
-    Condition: Has3AZs
     Properties:
       RouteTableId: !Ref PrivateRouteTableC
       DestinationIpv6CidrBlock: "::/0"
@@ -632,7 +677,6 @@ Resources:
 
   PrivateSubnetCRouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: Has3AZs
     Properties:
       SubnetId: !Ref PrivateSubnetC
       RouteTableId: !Ref PrivateRouteTableC
@@ -647,7 +691,7 @@ Resources:
       RouteTableIds:
         - !Ref PrivateRouteTableA
         - !Ref PrivateRouteTableB
-        - !If [Has3AZs, !Ref PrivateRouteTableC, !Ref "AWS::NoValue"]
+        - !Ref PrivateRouteTableC
 
   # ============================================================================
   # SECTION 2: IAM ROLES
@@ -825,10 +869,13 @@ Resources:
     DependsOn:
       - PrivateSubnetARouteAssoc
       - PrivateSubnetBRouteAssoc
+      - PrivateSubnetCRouteAssoc
       - PublicSubnetARouteAssoc
       - PublicSubnetBRouteAssoc
+      - PublicSubnetCRouteAssoc
       - NatGatewayA
       - NatGatewayB
+      - NatGatewayC
       - S3Endpoint
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}"
@@ -853,7 +900,7 @@ Resources:
         SubnetIds:
           - !Ref PrivateSubnetA
           - !Ref PrivateSubnetB
-          - !If [Has3AZs, !Ref PrivateSubnetC, !Ref "AWS::NoValue"]
+          - !Ref PrivateSubnetC
         EndpointPublicAccess: true
         EndpointPrivateAccess: true
         PublicAccessCidrs:
@@ -921,30 +968,17 @@ Resources:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-efs"
 
-  EfsMountTargetA:
-    Type: AWS::EFS::MountTarget
+  EfsMountTargets:
+    Type: Custom::EfsMountTargets
     Properties:
+      ServiceToken: !GetAtt QuotaCheckFunction.Arn
       FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PrivateSubnetA
-      SecurityGroups:
-        - !GetAtt EksCluster.ClusterSecurityGroupId
-
-  EfsMountTargetB:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PrivateSubnetB
-      SecurityGroups:
-        - !GetAtt EksCluster.ClusterSecurityGroupId
-
-  EfsMountTargetC:
-    Type: AWS::EFS::MountTarget
-    Condition: Has3AZs
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PrivateSubnetC
-      SecurityGroups:
-        - !GetAtt EksCluster.ClusterSecurityGroupId
+      Region: !Ref "AWS::Region"
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+        - !Ref PrivateSubnetC
+      SecurityGroupId: !GetAtt EksCluster.ClusterSecurityGroupId
 
   # ============================================================================
   # SECTION 4: EKS ADDONS
@@ -2481,6 +2515,11 @@ Resources:
               sets=props.get("HelmSets",{})
               for k,v in sets.items():
                 cmd+=["--set",f"{k}={v}"]
+              # GA all IPs as Helm array
+              ga_ips_key=props.get("GAIpsKey")
+              if ga_ips_key:
+                ips=[f"{ip}/32" for ip in props.get("GAIpv4s",[])]+[f"{ip}/128" for ip in props.get("GAIpv6s",[])]
+                cmd+=["--set",f"{ga_ips_key}={{{','.join(ips)}}}"]
               # Add auth URI if cognito configured
               if pool_id and client_id and secret:
                 issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
@@ -2509,7 +2548,7 @@ Resources:
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
       ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
-      ChartVersion: "0.1.0"
+      ChartVersion: "0.2.0"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
       HelmSets:
