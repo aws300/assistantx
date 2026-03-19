@@ -1157,7 +1157,7 @@ Resources:
             p=rpath(av,kind,ns)
             hd={"Authorization":f"Bearer {token}","Content-Type":"application/json","Accept":"application/json"}
             b=json.dumps(m).encode()
-            last_status=0;last_body={}
+            last_status=0;last_body={};last_attempt=0
             for attempt in range(retries):
               if not has_time(120):break
               r=http.request("POST",f"{ep}{p}",headers=hd,body=b)
@@ -1166,15 +1166,17 @@ Resources:
                 r=http.request("PATCH",f"{ep}{p}/{name}",headers=hd,body=b)
                 return "updated",r.status,json.loads(r.data.decode()) if r.data else {}
               if 200<=r.status<300:
+                if attempt>0:L.info(f"{kind}/{name} succeeded after {attempt+1} attempts")
                 return "created",r.status,json.loads(r.data.decode()) if r.data else {}
-              last_status=r.status
+              last_status=r.status;last_attempt=attempt+1
               try:last_body=json.loads(r.data.decode()) if r.data else {}
               except:last_body={"raw":r.data.decode()[:500] if r.data else ""}
               if attempt==0:L.warning(f"{r.status} body: {str(last_body)[:500]}")
               wait=min(30,5*(attempt+1))
               L.warning(f"{r.status} on {kind}/{name}, retry {attempt+1}/{retries} in {wait}s")
               time.sleep(wait)
-            return "error",last_status,last_body
+            msg=last_body.get("message",str(last_body)[:200]) if isinstance(last_body,dict) else str(last_body)[:200]
+            return "error",last_status,{"retries":last_attempt,"message":msg}
           def k8s_delete(http,ep,token,m):
             av=m.get("apiVersion","");kind=m.get("kind","");md=m.get("metadata",{})
             name=md.get("name","");ns=md.get("namespace")
@@ -1296,11 +1298,13 @@ Resources:
                   a,s,d=k8s_apply(http,ep,token,m)
                   lbl=f"{m.get('kind')}/{m.get('metadata',{}).get('name')}"
                   L.info(f"{a} {lbl} HTTP {s}")
-                  results.append({"r":lbl,"a":a,"s":s})
-                  if a=="error":L.error(f"Error on {lbl}: {json.dumps(d)[:500]}")
+                  results.append({"r":lbl,"a":a,"s":s,"d":d} if a=="error" else {"r":lbl,"a":a,"s":s})
+                  if a=="error":L.error(f"Error on {lbl}: {json.dumps(d)}")
               errs=[r for r in results if r["a"]=="error"]
               if errs:
-                send_cfn(event,ctx,"FAILED",reason=json.dumps(errs[:3])[:256]);return
+                e0=errs[0];msg=f"{e0['r']} HTTP {e0['s']} retries={e0.get('d',{}).get('retries','?')}: {e0.get('d',{}).get('message','unknown')}"
+                if len(errs)>1:msg+=f" (+{len(errs)-1} more)"
+                send_cfn(event,ctx,"FAILED",reason=msg[:256]);return
               env_id=props.get("EnvironmentId",cn.split("-")[-1] if "-" in cn else "001")
               ns_val=props.get("Namespace",f"cnf-{env_id}")
               hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
