@@ -28,6 +28,10 @@ Metadata:
           default: "EnvoyGateway"
         Parameters:
           - EnvoyGatewayVersion
+      - Label:
+          default: "Resource Tags"
+        Parameters:
+          - Tags
     ParameterLabels:
       ProjectName:
         default: "Project Name Prefix"
@@ -39,6 +43,8 @@ Metadata:
         default: "Kubernetes Version"
       EnvoyGatewayVersion:
         default: "EnvoyGateway Version"
+      Tags:
+        default: "Resource Tags (JSON)"
 
 # ==============================================================================
 # PARAMETERS
@@ -74,6 +80,10 @@ Parameters:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
     Default: ""
+  Tags:
+    Type: String
+    Description: 'JSON object of tags to apply to all resources (e.g. {"Environment":"prod","Team":"platform"})'
+    Default: "{}"
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
 
@@ -117,7 +127,7 @@ Resources:
   # Runs before any infrastructure is created. Fails immediately if AWS service
   # quotas are insufficient or if a deployment with the same ProjectName +
   # EnvironmentId already exists, preventing partial or conflicting stacks.
-  # Checks: EIP, VPC, NAT Gateway/AZ, m8g availability, EKS/IAM/Lambda/Cognito
+  # Checks: EIP, VPC, NAT Gateway/AZ, m8g availability, vCPU quota, EKS/IAM/Lambda/Cognito
   # naming conflicts.
   # ============================================================================
 
@@ -236,8 +246,16 @@ Resources:
               return
 
             # --- QuotaCheck handler ---
-            if rt in ('Delete', 'Update'):
+            if rt == 'Delete':
               return send('SUCCESS')
+            if rt == 'Update':
+              try:
+                _ec2 = boto3.client('ec2', region_name=region)
+                azs = sorted([z['ZoneName'] for z in _ec2.describe_availability_zones(
+                  Filters=[{'Name': 'state', 'Values': ['available']}])['AvailabilityZones']])
+                return send('SUCCESS', {'Message': 'Update pass-through.', 'AZ1': azs[0], 'AZ2': azs[1], 'AZ3': azs[2] if len(azs) >= 3 else azs[0]})
+              except Exception as e:
+                return send('FAILED', reason=f"AZ detection on update: {e}")
             pn, eid = p['ProjectName'], p['EnvironmentId']
             prefix = pn + eid
             errors = []
@@ -289,15 +307,30 @@ Resources:
                                   "Increase quota: Service Quotas > VPC > NAT gateways per AZ (L-FE5A380F).")
             except Exception as e:
               errors.append(f"NAT GW check error: {e}")
-            # m8g instance availability (cpu-system NodePool)
+            # Instance type availability (m8g)
             try:
               avail = ec2.describe_instance_type_offerings(
                 Filters=[{'Name': 'instance-type', 'Values': ['m8g.xlarge']}])['InstanceTypeOfferings']
               if not avail:
-                errors.append(f"m8g.xlarge not available in {region}. "
-                              "Stack will deploy but cpu-system NodePool won't schedule pods.")
+                errors.append(f"m8g.xlarge not available in {region}. NodePools using m8g won't schedule pods.")
             except Exception as e:
-              errors.append(f"m8g check error: {e}")
+              errors.append(f"Instance type check error: {e}")
+            # On-Demand vCPU quota (need at least 4 for initial node)
+            try:
+              vcpu_limit = int(sq.get_service_quota(ServiceCode='ec2', QuotaCode='L-1216C47A')['Quota']['Value'])
+              if vcpu_limit < 4:
+                errors.append(f"On-Demand vCPU quota too low: {vcpu_limit}. Need at least 4. "
+                              "Increase quota: Service Quotas > EC2 > Running On-Demand Standard instances (L-1216C47A).")
+            except Exception as e:
+              errors.append(f"vCPU quota check error: {e}")
+            # Verify deployer permissions via EC2 dry-run
+            try:
+              ec2.run_instances(DryRun=True, ImageId='ami-00000000', InstanceType='t3.micro', MinCount=1, MaxCount=1)
+            except Exception as e:
+              if 'DryRunOperation' in str(e): pass  # Has permission
+              elif 'UnauthorizedOperation' in str(e):
+                errors.append("Insufficient permissions: EC2 RunInstances denied. Deployer needs admin or PowerUser access.")
+              # Other errors (invalid AMI etc) mean permission exists
             # EKS cluster name conflict
             try:
               eks = boto3.client('eks', region_name=region)
@@ -321,6 +354,7 @@ Resources:
             lm = boto3.client('lambda', region_name=region)
             conflicting = []
             for fn in [f"{prefix}-kubectl", f"{prefix}-cognito-setup", f"{prefix}-cognito-user-creator",
+                       f"{prefix}-cognito-pre-token-gen", f"{prefix}-cognito-lambda-config",
                        f"{prefix}-eg-installer", f"{prefix}-nlb-lookup", f"{prefix}-helm-deploy"]:
               try: lm.get_function(FunctionName=fn); conflicting.append(fn)
               except lm.exceptions.ResourceNotFoundException: pass
@@ -336,6 +370,27 @@ Resources:
                 errors.append(f"Cognito domain '{domain}' already exists. Use a different EnvironmentId.")
             except Exception:
               pass
+            # Validate Tags parameter
+            try:
+              import re
+              tags_raw = p.get('Tags', '{}')
+              tags = json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+              if not isinstance(tags, dict):
+                errors.append("Tags must be a JSON object (e.g. {\"Key\":\"Value\"}).")
+              else:
+                tag_re = re.compile(r'^[\w\s_.:/=+\-@]{1,128}$')
+                val_re = re.compile(r'^[\w\s_.:/=+\-@]{0,256}$')
+                for k, v in tags.items():
+                  if k.startswith('aws:'):
+                    errors.append(f"Tag key '{k}' cannot start with 'aws:' (reserved prefix).")
+                  if not tag_re.match(k):
+                    errors.append(f"Tag key '{k}' invalid (1-128 chars, alphanumeric/spaces/_.:/=+-@).")
+                  if not val_re.match(str(v)):
+                    errors.append(f"Tag value for '{k}' invalid (0-256 chars, alphanumeric/spaces/_.:/=+-@).")
+                if len(tags) > 45:
+                  errors.append(f"Too many tags ({len(tags)}). Max 45 user tags (AWS reserves 5).")
+            except json.JSONDecodeError as e:
+              errors.append(f"Tags is not valid JSON: {e}")
             # Detect AZs
             try:
               azs = sorted([z['ZoneName'] for z in ec2.describe_availability_zones(
@@ -358,6 +413,7 @@ Resources:
       ProjectName: !Ref ProjectName
       EnvironmentId: !Ref EnvironmentId
       Region: !Ref "AWS::Region"
+      Tags: !Ref Tags
 
   # ============================================================================
   # SECTION 1: VPC + NETWORKING (IPv6 Dual-Stack)
@@ -718,6 +774,23 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy
         - arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy
         - arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy
+      Policies:
+        - PolicyName: AllowCustomNodeClassTags
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateLaunchTemplate
+                  - ec2:CreateFleet
+                  - ec2:RunInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:RequestTag/eks:eks-cluster-name": "${aws:PrincipalTag/eks:eks-cluster-name}"
+                  StringLike:
+                    "aws:RequestTag/eks:kubernetes-node-class-name": "*"
+                    "aws:RequestTag/eks:kubernetes-node-pool-name": "*"
 
   # --- EKS Node Role ---
   EksNodeRole:
@@ -775,10 +848,13 @@ Resources:
                 Resource: "*"
               - Effect: Allow
                 Action:
+                  - cognito-idp:DescribeUserPool
                   - cognito-idp:DescribeUserPoolClient
                   - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:UpdateUserPool
                   - cognito-idp:AdminCreateUser
                   - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminAddUserToGroup
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -828,21 +904,7 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:ListRolePolicies
                 Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}${EnvironmentId}-PodRole"
-              - Sid: BedrockFullAccess
-                Effect: Allow
-                Action:
-                  - bedrock:*
-                Resource: "*"
-              - Sid: BedrockRuntimeFullAccess
-                Effect: Allow
-                Action:
-                  - bedrock-runtime:*
-                Resource: "*"
-              - Sid: BedrockAgentRuntimeFullAccess
-                Effect: Allow
-                Action:
-                  - bedrock-agent-runtime:*
-                Resource: "*"
+
   EfsCsiRole:
     Type: AWS::IAM::Role
     DependsOn: QuotaCheck
@@ -984,9 +1046,266 @@ Resources:
   # SECTION 4: EKS ADDONS
   # ============================================================================
 
+  # Custom Resource: Apply NodePools before addons so custom pools schedule system pods
+  K8sNodePools:
+    Type: Custom::K8sNodePools
+    DependsOn:
+      - LambdaAccessEntry
+      - ClusterSGIngressFromLambda
+    Properties:
+      ServiceToken: !GetAtt KubectlFunction.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref "AWS::Region"
+      PostApplySleep: "60"
+      NodeClassTags: !Ref Tags
+      Manifests:
+        # --- Custom NodePool: cpu-system (replaces built-in system for m8g.xlarge) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-system
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            template:
+              metadata:
+                labels:
+                  usage: system
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default-tags
+                requirements:
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - m8g.xlarge
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+                taints:
+                  - effect: NoSchedule
+                    key: CriticalAddonsOnly
+                terminationGracePeriod: 24h0m0s
+        # --- Custom NodePool: cpu (arm64 m8g general workloads) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default-tags
+                requirements:
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - m8g
+                  - key: eks.amazonaws.com/instance-cpu
+                    operator: In
+                    values:
+                      - "2"
+                      - "4"
+                      - "8"
+                      - "16"
+                      - "32"
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - arm64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+        # --- Custom NodePool: cpu-large (arm64 m8g large with taint) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-large
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu-large
+              spec:
+                expireAfter: 480h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default-tags
+                requirements:
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - m8g
+                  - key: eks.amazonaws.com/instance-cpu
+                    operator: In
+                    values:
+                      - "8"
+                      - "16"
+                      - "32"
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - arm64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                taints:
+                  - effect: NoSchedule
+                    key: size
+                    value: "large"
+        # --- Custom NodePool: gpu (nvidia g6e.2xlarge) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: gpu
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "1000"
+              memory: 1000Gi
+              nvidia.com/gpu: 32
+            template:
+              metadata:
+                labels:
+                  type: gpu
+              spec:
+                expireAfter: 470h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default-tags
+                requirements:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values:
+                      - g6e.2xlarge
+                  - key: eks.amazonaws.com/instance-gpu-manufacturer
+                    operator: In
+                    values:
+                      - nvidia
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                taints:
+                  - effect: NoSchedule
+                    key: nvidia.com/gpu
+                    value: "true"
+        # --- Custom NodePool: cpu-general (x86 c8a/c8i with taint) ---
+        - apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: cpu-general
+            labels:
+              app.kubernetes.io/managed-by: eks
+            annotations:
+              karpenter.sh/nodepool-hash-version: v3
+          spec:
+            disruption:
+              budgets:
+                - nodes: 10%
+              consolidateAfter: 15m
+              consolidationPolicy: WhenEmpty
+            limits:
+              cpu: "128"
+              memory: 256Gi
+            template:
+              metadata:
+                labels:
+                  type: cpu-x86
+              spec:
+                expireAfter: 472h
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: default-tags
+                requirements:
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values:
+                      - on-demand
+                  - key: eks.amazonaws.com/instance-family
+                    operator: In
+                    values:
+                      - c8a
+                      - c8i
+                      - c8i-flex
+                      - c7a
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+                taints:
+                  - effect: NoSchedule
+                    key: arch
+                    value: x86_64
+                terminationGracePeriod: 24h0m0s
+
   AddonVpcCni:
     Type: AWS::EKS::Addon
-    DependsOn: LambdaAccessEntry
+    DependsOn:
+      - LambdaAccessEntry
+      - K8sNodePools
     Properties:
       ClusterName: !Ref EksCluster
       AddonName: vpc-cni
@@ -1101,8 +1420,6 @@ Resources:
     DependsOn:
       - LambdaAccessEntry
       - ClusterSGIngressFromLambda
-      - AddonCoreDns
-      - AddonMetricsServer
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-kubectl"
       Runtime: python3.12
@@ -1259,6 +1576,8 @@ Resources:
                 L.info("Checking EKS addon health...")
                 try:
                   addon_names=eks.list_addons(clusterName=cn).get("addons",[])
+                  core_addons={"vpc-cni","coredns","kube-proxy","eks-pod-identity-agent"}
+                  addon_names=[a for a in addon_names if a in core_addons]
                   L.info(f"Addons: {addon_names}")
                   for addon_att in range(360):
                     if not has_time(300):break  # Leave 5min for manifest apply
@@ -1290,6 +1609,38 @@ Resources:
               manifests=props.get("Manifests",[])
               if isinstance(manifests,str):manifests=json.loads(manifests)
               manifests=coerce_ints(manifests)
+              # --- Create default-tags NodeClass from default + user tags ---
+              nc_tags_raw=props.get("NodeClassTags","")
+              if nc_tags_raw and rt in("Create","Update"):
+                try:
+                  nc_tags=json.loads(nc_tags_raw) if isinstance(nc_tags_raw,str) else nc_tags_raw
+                  if not isinstance(nc_tags,dict):nc_tags={}
+                  token=get_token(sess,cn,region)
+                  # Wait for default NodeClass to exist and be Ready
+                  for nca in range(300):
+                    if not has_time(120):break
+                    nc_s,nc_d=k8s_get(http,ep,token,"eks.amazonaws.com/v1","NodeClass","default")
+                    if nc_s==200:
+                      nc_conds={c["type"]:c["status"] for c in nc_d.get("status",{}).get("conditions",[])}
+                      if nc_conds.get("Ready")=="True":break
+                    L.info(f"Waiting for default NodeClass Ready, attempt {nca+1}");time.sleep(1)
+                  if nc_s==200:
+                    nc_new={"apiVersion":"eks.amazonaws.com/v1","kind":"NodeClass","metadata":{"name":"default-tags"},"spec":nc_d.get("spec",{})}
+                    if nc_tags:nc_new["spec"]["tags"]=nc_tags
+                    a,s,d=k8s_apply(http,ep,token,nc_new)
+                    L.info(f"NodeClass/default-tags: {a} HTTP {s}")
+                    # Wait for default-tags to become Ready
+                    for ncr in range(300):
+                      if not has_time(120):break
+                      nct_s,nct_d=k8s_get(http,ep,token,"eks.amazonaws.com/v1","NodeClass","default-tags")
+                      if nct_s==200:
+                        nct_conds={c["type"]:c["status"] for c in nct_d.get("status",{}).get("conditions",[])}
+                        if nct_conds.get("Ready")=="True":L.info("NodeClass/default-tags is Ready!");break
+                      L.info(f"Waiting for default-tags Ready, attempt {ncr+1}");time.sleep(1)
+                  else:
+                    L.warning(f"default NodeClass not found (HTTP {nc_s}), skipping default-tags creation")
+                except Exception as nce:
+                  L.warning(f"NodeClass setup error: {nce}")
               results=[]
               if rt in("Create","Update"):
                 # Refresh token (may have expired during addon wait)
@@ -1305,25 +1656,16 @@ Resources:
                 e0=errs[0];msg=f"{e0['r']} HTTP {e0['s']} retries={e0.get('d',{}).get('retries','?')}: {e0.get('d',{}).get('message','unknown')}"
                 if len(errs)>1:msg+=f" (+{len(errs)-1} more)"
                 send_cfn(event,ctx,"FAILED",reason=msg[:256]);return
+              # Optional post-apply sleep (e.g. wait for NodePools to register)
+              sleep_secs=int(props.get("PostApplySleep","0"))
+              if sleep_secs>0:
+                L.info(f"PostApplySleep: waiting {sleep_secs}s");time.sleep(sleep_secs)
+              # Built-in system NodePool kept - Karpenter controller depends on it for scheduling
               env_id=props.get("EnvironmentId",cn.split("-")[-1] if "-" in cn else "001")
               ns_val=props.get("Namespace",f"cnf-{env_id}")
               hd_base={"Authorization":f"Bearer {token}","Accept":"application/json"}
               nlb_dns="";nlb_arn=""
-              if rt=="Create":
-                # --- Wait for default NodeClass to become Ready (Karpenter system pool) ---
-                # Refresh token before long wait loops
-                token=get_token(sess,cn,region)
-                L.info("Waiting for NodeClass 'default' to become Ready...")
-                for nc_att in range(360):
-                  if not has_time(120):break
-                  token=get_token(sess,cn,region)
-                  nc_s,nc_d=k8s_get(http,ep,token,"eks.amazonaws.com/v1","NodeClass","default")
-                  if nc_s==200:
-                    nc_conds={c["type"]:c["status"] for c in nc_d.get("status",{}).get("conditions",[])}
-                    L.info(f"NodeClass conditions: {nc_conds}")
-                    if nc_conds.get("Ready")=="True":
-                      L.info("NodeClass default is Ready!");break
-                  L.info(f"NodeClass not Ready yet, attempt {nc_att+1}");time.sleep(10)
+              if rt=="Create" and not props.get("PostApplySleep"):
                 # --- Wait for at least 1 Ready node ---
                 L.info("Waiting for at least 1 Ready node...")
                 node_ready=False
@@ -1400,6 +1742,7 @@ Resources:
     DependsOn: QuotaCheck
     Properties:
       UserPoolName: !Sub "${ProjectName}${EnvironmentId}"
+      UserPoolTier: ESSENTIALS
       AutoVerifiedAttributes:
         - email
       AliasAttributes:
@@ -1463,6 +1806,93 @@ Resources:
       ClientId: !Ref CognitoUserPoolClient
       UseCognitoProvidedValues: true
 
+  # Pre Token Generation Lambda: maps cognito:groups → groups claim in JWT
+  CognitoPreTokenGenFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-pre-token-gen"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 5
+      MemorySize: 128
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            const groups = event.request?.groupConfiguration?.groupsToOverride ?? [];
+            event.response = {
+              claimsAndScopeOverrideDetails: {
+                accessTokenGeneration: { claimsToAddOrOverride: { groups } },
+                idTokenGeneration: { claimsToAddOrOverride: { groups } },
+              },
+            };
+            return event;
+          };
+
+  CognitoPreTokenGenPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CognitoPreTokenGenFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CognitoUserPool.Arn
+
+  CognitoUserPoolLambdaConfig:
+    Type: Custom::CognitoLambdaConfig
+    DependsOn:
+      - CognitoPreTokenGenPermission
+    Properties:
+      ServiceToken: !GetAtt CognitoLambdaConfigFunction.Arn
+      UserPoolId: !Ref CognitoUserPool
+      LambdaArn: !GetAtt CognitoPreTokenGenFunction.Arn
+      Region: !Ref "AWS::Region"
+
+  CognitoLambdaConfigFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaCheck
+    Properties:
+      FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-lambda-config"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 128
+      Role: !GetAtt KubectlLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json,logging,boto3,urllib3
+          L=logging.getLogger();L.setLevel(logging.INFO)
+          def send_cfn(event,ctx,status,reason=None):
+            body=json.dumps({"Status":status,"Reason":reason or f"Logs: {ctx.log_stream_name}",
+              "PhysicalResourceId":event.get("PhysicalResourceId",ctx.log_stream_name),
+              "StackId":event["StackId"],"RequestId":event["RequestId"],
+              "LogicalResourceId":event["LogicalResourceId"],"Data":{}})
+            urllib3.PoolManager().request("PUT",event["ResponseURL"],body=body.encode(),headers={"Content-Type":""})
+          def handler(event,ctx):
+            L.info(json.dumps(event,default=str))
+            props=event["ResourceProperties"]
+            pool_id=props["UserPoolId"];region=props.get("Region",boto3.session.Session().region_name)
+            cog=boto3.client("cognito-idp",region_name=region)
+            try:
+              # Describe current pool to preserve existing settings
+              pool=cog.describe_user_pool(UserPoolId=pool_id)['UserPool']
+              lc=pool.get('LambdaConfig',{})
+              if event["RequestType"]=="Delete":
+                lc.pop('PreTokenGeneration',None);lc.pop('PreTokenGenerationConfig',None)
+              else:
+                lc['PreTokenGenerationConfig']={"LambdaArn":props["LambdaArn"],"LambdaVersion":"V3_0"}
+              cog.update_user_pool(UserPoolId=pool_id,LambdaConfig=lc)
+              send_cfn(event,ctx,"SUCCESS")
+            except Exception as e:
+              L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
+
+  CognitoAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref CognitoUserPool
+      Description: Administrator group
+
   # Lambda to create Cognito admin user
   CognitoUserCreatorFunction:
     Type: AWS::Lambda::Function
@@ -1514,17 +1944,24 @@ Resources:
               cog.admin_set_user_password(UserPoolId=pool_id,Username=uname,
                 Password=password,Permanent=True)
               L.info(f"Set permanent password for {uname}")
+              group=props.get("GroupName")
+              if group:
+                cog.admin_add_user_to_group(UserPoolId=pool_id,Username=uname,GroupName=group)
+                L.info(f"Added {uname} to group {group}")
               send_cfn(event,ctx,"SUCCESS",data={"Username":username,"Password":password},pid="cognito-admin-user")
             except Exception as e:
               L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
 
   CognitoAdminUser:
     Type: Custom::CognitoUser
-    DependsOn: CognitoUserPool
+    DependsOn:
+      - CognitoUserPool
+      - CognitoAdminGroup
     Properties:
       ServiceToken: !GetAtt CognitoUserCreatorFunction.Arn
       UserPoolId: !Ref CognitoUserPool
       Username: admin@cnf.local
+      GroupName: admin
       Region: !Ref "AWS::Region"
 
   # ============================================================================
@@ -1699,6 +2136,7 @@ Resources:
     DependsOn:
       - InstallEnvoyGateway
       - EfsCsiPodIdentityAssoc
+      - K8sNodePools
     Properties:
       ServiceToken: !GetAtt KubectlFunction.Arn
       RestartDeployments: "kube-system/efs-csi-controller"
@@ -1779,268 +2217,6 @@ Resources:
                   certificateRefs:
                     - kind: Secret
                       name: eg-https-cert
-
-              - name: https-7883
-                port: 7883
-                protocol: HTTPS
-                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
-                allowedRoutes:
-                  namespaces:
-                    from: All
-                tls:
-                  mode: Terminate
-                  certificateRefs:
-                    - kind: Secret
-                      name: ga-https-cert
-              - name: tcp-7881
-                port: 7881
-                protocol: TCP
-                allowedRoutes:
-                  kinds:
-                    - kind: TCPRoute
-                  namespaces:
-                    from: All
-        # --- Custom NodePool: cpu-system (replaces built-in system for m8g.xlarge) ---
-        - apiVersion: karpenter.sh/v1
-          kind: NodePool
-          metadata:
-            name: cpu-system
-            labels:
-              app.kubernetes.io/managed-by: eks
-            annotations:
-              karpenter.sh/nodepool-hash-version: v3
-          spec:
-            disruption:
-              budgets:
-                - nodes: 10%
-              consolidateAfter: 15m
-              consolidationPolicy: WhenEmpty
-            template:
-              metadata:
-                labels:
-                  usage: system
-              spec:
-                expireAfter: 480h
-                nodeClassRef:
-                  group: eks.amazonaws.com
-                  kind: NodeClass
-                  name: default
-                requirements:
-                  - key: karpenter.sh/capacity-type
-                    operator: In
-                    values:
-                      - on-demand
-                  - key: node.kubernetes.io/instance-type
-                    operator: In
-                    values:
-                      - m8g.xlarge
-                  - key: kubernetes.io/os
-                    operator: In
-                    values:
-                      - linux
-                taints:
-                  - effect: NoSchedule
-                    key: CriticalAddonsOnly
-                terminationGracePeriod: 24h0m0s
-        # --- Custom NodePool: cpu (arm64 m8g general workloads) ---
-        - apiVersion: karpenter.sh/v1
-          kind: NodePool
-          metadata:
-            name: cpu
-            labels:
-              app.kubernetes.io/managed-by: eks
-            annotations:
-              karpenter.sh/nodepool-hash-version: v3
-          spec:
-            disruption:
-              budgets:
-                - nodes: 10%
-              consolidateAfter: 15m
-              consolidationPolicy: WhenEmpty
-            limits:
-              cpu: "1000"
-              memory: 1000Gi
-            template:
-              metadata:
-                labels:
-                  type: cpu
-              spec:
-                expireAfter: 480h
-                nodeClassRef:
-                  group: eks.amazonaws.com
-                  kind: NodeClass
-                  name: default
-                requirements:
-                  - key: eks.amazonaws.com/instance-family
-                    operator: In
-                    values:
-                      - m8g
-                  - key: eks.amazonaws.com/instance-cpu
-                    operator: In
-                    values:
-                      - "2"
-                      - "4"
-                      - "8"
-                      - "16"
-                      - "32"
-                  - key: kubernetes.io/arch
-                    operator: In
-                    values:
-                      - arm64
-                  - key: karpenter.sh/capacity-type
-                    operator: In
-                    values:
-                      - on-demand
-        # --- Custom NodePool: cpu-large (arm64 m8g large with taint) ---
-        - apiVersion: karpenter.sh/v1
-          kind: NodePool
-          metadata:
-            name: cpu-large
-            labels:
-              app.kubernetes.io/managed-by: eks
-            annotations:
-              karpenter.sh/nodepool-hash-version: v3
-          spec:
-            disruption:
-              budgets:
-                - nodes: 10%
-              consolidateAfter: 15m
-              consolidationPolicy: WhenEmpty
-            limits:
-              cpu: "1000"
-              memory: 1000Gi
-            template:
-              metadata:
-                labels:
-                  type: cpu-large
-              spec:
-                expireAfter: 480h
-                nodeClassRef:
-                  group: eks.amazonaws.com
-                  kind: NodeClass
-                  name: default
-                requirements:
-                  - key: eks.amazonaws.com/instance-family
-                    operator: In
-                    values:
-                      - m8g
-                  - key: eks.amazonaws.com/instance-cpu
-                    operator: In
-                    values:
-                      - "8"
-                      - "16"
-                      - "32"
-                  - key: kubernetes.io/arch
-                    operator: In
-                    values:
-                      - arm64
-                  - key: karpenter.sh/capacity-type
-                    operator: In
-                    values:
-                      - on-demand
-                taints:
-                  - effect: NoSchedule
-                    key: size
-                    value: "large"
-        # --- Custom NodePool: gpu (nvidia g6e.2xlarge) ---
-        - apiVersion: karpenter.sh/v1
-          kind: NodePool
-          metadata:
-            name: gpu
-            labels:
-              app.kubernetes.io/managed-by: eks
-            annotations:
-              karpenter.sh/nodepool-hash-version: v3
-          spec:
-            disruption:
-              budgets:
-                - nodes: 10%
-              consolidateAfter: 15m
-              consolidationPolicy: WhenEmpty
-            limits:
-              cpu: "1000"
-              memory: 1000Gi
-              nvidia.com/gpu: 32
-            template:
-              metadata:
-                labels:
-                  type: gpu
-              spec:
-                expireAfter: 470h
-                nodeClassRef:
-                  group: eks.amazonaws.com
-                  kind: NodeClass
-                  name: default
-                requirements:
-                  - key: node.kubernetes.io/instance-type
-                    operator: In
-                    values:
-                      - g6e.2xlarge
-                  - key: eks.amazonaws.com/instance-gpu-manufacturer
-                    operator: In
-                    values:
-                      - nvidia
-                  - key: kubernetes.io/arch
-                    operator: In
-                    values:
-                      - amd64
-                  - key: karpenter.sh/capacity-type
-                    operator: In
-                    values:
-                      - on-demand
-                taints:
-                  - effect: NoSchedule
-                    key: nvidia.com/gpu
-                    value: "true"
-        # --- Custom NodePool: cpu-general (x86 c8a/c8i with taint) ---
-        - apiVersion: karpenter.sh/v1
-          kind: NodePool
-          metadata:
-            name: cpu-general
-            labels:
-              app.kubernetes.io/managed-by: eks
-            annotations:
-              karpenter.sh/nodepool-hash-version: v3
-          spec:
-            disruption:
-              budgets:
-                - nodes: 10%
-              consolidateAfter: 15m
-              consolidationPolicy: WhenEmpty
-            limits:
-              cpu: "128"
-              memory: 256Gi
-            template:
-              metadata:
-                labels:
-                  type: cpu-x86
-              spec:
-                expireAfter: 472h
-                nodeClassRef:
-                  group: eks.amazonaws.com
-                  kind: NodeClass
-                  name: default
-                requirements:
-                  - key: karpenter.sh/capacity-type
-                    operator: In
-                    values:
-                      - on-demand
-                  - key: eks.amazonaws.com/instance-family
-                    operator: In
-                    values:
-                      - c8a
-                      - c8i
-                      - c8i-flex
-                      - c7a
-                  - key: kubernetes.io/arch
-                    operator: In
-                    values:
-                      - amd64
-                taints:
-                  - effect: NoSchedule
-                    key: arch
-                    value: x86_64
-                terminationGracePeriod: 24h0m0s
         # --- StorageClass (EFS with uid/gid 1000) ---
         - apiVersion: storage.k8s.io/v1
           kind: StorageClass
@@ -2356,52 +2532,6 @@ Resources:
           ClientIPPreservationEnabled: true
           Weight: 100
 
-
-  GAListenerExtra1:
-    Type: AWS::GlobalAccelerator::Listener
-    Properties:
-      AcceleratorArn: !Ref GlobalAccelerator
-      Protocol: TCP
-      PortRanges:
-        - FromPort: 7883
-          ToPort: 7883
-
-  GAEndpointGroupExtra1:
-    Type: AWS::GlobalAccelerator::EndpointGroup
-    Properties:
-      ListenerArn: !Ref GAListenerExtra1
-      EndpointGroupRegion: !Ref "AWS::Region"
-      HealthCheckProtocol: TCP
-      HealthCheckPort: 7883
-      HealthCheckIntervalSeconds: 30
-      ThresholdCount: 3
-      EndpointConfigurations:
-        - EndpointId: !GetAtt NlbLookup.NlbArn
-          ClientIPPreservationEnabled: true
-          Weight: 100
-
-  GAListenerExtra2:
-    Type: AWS::GlobalAccelerator::Listener
-    Properties:
-      AcceleratorArn: !Ref GlobalAccelerator
-      Protocol: TCP
-      PortRanges:
-        - FromPort: 7881
-          ToPort: 7881
-
-  GAEndpointGroupExtra2:
-    Type: AWS::GlobalAccelerator::EndpointGroup
-    Properties:
-      ListenerArn: !Ref GAListenerExtra2
-      EndpointGroupRegion: !Ref "AWS::Region"
-      HealthCheckProtocol: TCP
-      HealthCheckPort: 7881
-      HealthCheckIntervalSeconds: 30
-      ThresholdCount: 3
-      EndpointConfigurations:
-        - EndpointId: !GetAtt NlbLookup.NlbArn
-          ClientIPPreservationEnabled: true
-          Weight: 100
   # ============================================================================
   # SECTION 10: KUBERNETES APP RESOURCES (Test Pod + Routes + OIDC Policy)
   # ============================================================================
@@ -2529,7 +2659,7 @@ Resources:
               if pool_id and client_id and secret:
                 issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
                 auth_uri=f"oidc://{client_id}:{secret}@{issuer_host}?scope=openid%20profile%20email&oidc_logout=false"
-                cmd+=["--set",f"assistantx.config.auth={auth_uri}"]
+                cmd+=["--set",f"scaffolding.config.auth={auth_uri}"]
               L.info(f"Running: {' '.join(cmd[:8])}...")
               r=subprocess.run(cmd,capture_output=True,text=True,env=env,timeout=540)
               L.info(f"stdout: {r.stdout}")
@@ -2552,8 +2682,8 @@ Resources:
       Region: !Ref "AWS::Region"
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
-      ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
-      ChartVersion: "0.2.0"
+      ChartRef: "oci://public.ecr.aws/b1y9i2f3/cnf"
+      ChartVersion: "0.1.0"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
       HelmSets:
@@ -2636,27 +2766,6 @@ Resources:
                   certificateRefs:
                     - kind: Secret
                       name: eg-https-cert
-
-              - name: https-7883
-                port: 7883
-                protocol: HTTPS
-                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
-                allowedRoutes:
-                  namespaces:
-                    from: All
-                tls:
-                  mode: Terminate
-                  certificateRefs:
-                    - kind: Secret
-                      name: ga-https-cert
-              - name: tcp-7881
-                port: 7881
-                protocol: TCP
-                allowedRoutes:
-                  kinds:
-                    - kind: TCPRoute
-                  namespaces:
-                    from: All
               - name: https-ga
                 port: 443
                 protocol: HTTPS
