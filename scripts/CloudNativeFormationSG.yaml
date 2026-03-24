@@ -2774,6 +2774,7 @@ Resources:
         assistantx.host.backend: !GetAtt GlobalAccelerator.DualStackDnsName
         assistantx.irsaRoleArn: !GetAtt PodRole.Arn
         assistantx.livekitServer.nodeIp: !Select [0, !GetAtt GlobalAccelerator.Ipv4Addresses]
+        global.httpsListenerName: "https-ga"
         assistantx.config.livekit.agentName: "AssistantX"
         assistantx.config.livekit.voiceMode: "realtime"
         assistantx.config.livekit.novaSonic.region: "ap-northeast-1"
