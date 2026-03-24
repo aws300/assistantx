@@ -2230,6 +2230,8 @@ Resources:
                   mode: Terminate
                   certificateRefs:
                     - kind: Secret
+                      name: ga-https-cert
+                    - kind: Secret
                       name: eg-https-cert
 
               - name: https-7883
@@ -2252,6 +2254,18 @@ Resources:
                     - kind: TCPRoute
                   namespaces:
                     from: All
+              - name: https-lb
+                port: 443
+                protocol: HTTPS
+                hostname: !GetAtt NlbLookup.NlbDns
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: eg-https-cert
         # --- StorageClass (EFS with uid/gid 1000) ---
         - apiVersion: storage.k8s.io/v1
           kind: StorageClass
@@ -2764,7 +2778,7 @@ Resources:
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
       ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
-      ChartVersion: "0.2.0"
+      ChartVersion: "0.2.1"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
       HelmSets:
@@ -2774,7 +2788,6 @@ Resources:
         assistantx.host.backend: !GetAtt GlobalAccelerator.DualStackDnsName
         assistantx.irsaRoleArn: !GetAtt PodRole.Arn
         assistantx.livekitServer.nodeIp: !Select [0, !GetAtt GlobalAccelerator.Ipv4Addresses]
-        global.httpsListenerName: "https-ga"
         assistantx.config.livekit.agentName: "AssistantX"
         assistantx.config.livekit.voiceMode: "realtime"
         assistantx.config.livekit.novaSonic.region: "ap-northeast-1"
@@ -2811,7 +2824,7 @@ Resources:
               kind: ClusterIssuer
             dnsNames:
               - !GetAtt GlobalAccelerator.DualStackDnsName
-        # --- Patch Gateway to add https-ga listener ---
+        # --- Patch Gateway: https=GA(default), https-lb=NLB ---
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
           metadata:
@@ -2836,13 +2849,14 @@ Resources:
               - name: https
                 port: 443
                 protocol: HTTPS
-                hostname: !GetAtt NlbLookup.NlbDns
                 allowedRoutes:
                   namespaces:
                     from: All
                 tls:
                   mode: Terminate
                   certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
                     - kind: Secret
                       name: eg-https-cert
 
@@ -2866,10 +2880,10 @@ Resources:
                     - kind: TCPRoute
                   namespaces:
                     from: All
-              - name: https-ga
+              - name: https-lb
                 port: 443
                 protocol: HTTPS
-                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                hostname: !GetAtt NlbLookup.NlbDns
                 allowedRoutes:
                   namespaces:
                     from: All
@@ -2877,7 +2891,7 @@ Resources:
                   mode: Terminate
                   certificateRefs:
                     - kind: Secret
-                      name: ga-https-cert
+                      name: eg-https-cert
         # --- ClientTrafficPolicy for HTTP/2 ---
         - apiVersion: gateway.envoyproxy.io/v1alpha1
           kind: ClientTrafficPolicy
