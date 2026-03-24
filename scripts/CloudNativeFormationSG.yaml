@@ -904,7 +904,21 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:ListRolePolicies
                 Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}${EnvironmentId}-PodRole"
-
+              - Sid: BedrockFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock:*
+                Resource: "*"
+              - Sid: BedrockRuntimeFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock-runtime:*
+                Resource: "*"
+              - Sid: BedrockAgentRuntimeFullAccess
+                Effect: Allow
+                Action:
+                  - bedrock-agent-runtime:*
+                Resource: "*"
   EfsCsiRole:
     Type: AWS::IAM::Role
     DependsOn: QuotaCheck
@@ -2217,6 +2231,27 @@ Resources:
                   certificateRefs:
                     - kind: Secret
                       name: eg-https-cert
+
+              - name: https-7883
+                port: 7883
+                protocol: HTTPS
+                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
+              - name: tcp-7881
+                port: 7881
+                protocol: TCP
+                allowedRoutes:
+                  kinds:
+                    - kind: TCPRoute
+                  namespaces:
+                    from: All
         # --- StorageClass (EFS with uid/gid 1000) ---
         - apiVersion: storage.k8s.io/v1
           kind: StorageClass
@@ -2532,6 +2567,52 @@ Resources:
           ClientIPPreservationEnabled: true
           Weight: 100
 
+
+  GAListenerExtra1:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 7883
+          ToPort: 7883
+
+  GAEndpointGroupExtra1:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListenerExtra1
+      EndpointGroupRegion: !Ref "AWS::Region"
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 7883
+      HealthCheckIntervalSeconds: 30
+      ThresholdCount: 3
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
+
+  GAListenerExtra2:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 7881
+          ToPort: 7881
+
+  GAEndpointGroupExtra2:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref GAListenerExtra2
+      EndpointGroupRegion: !Ref "AWS::Region"
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 7881
+      HealthCheckIntervalSeconds: 30
+      ThresholdCount: 3
+      EndpointConfigurations:
+        - EndpointId: !GetAtt NlbLookup.NlbArn
+          ClientIPPreservationEnabled: true
+          Weight: 100
   # ============================================================================
   # SECTION 10: KUBERNETES APP RESOURCES (Test Pod + Routes + OIDC Policy)
   # ============================================================================
@@ -2659,7 +2740,7 @@ Resources:
               if pool_id and client_id and secret:
                 issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
                 auth_uri=f"oidc://{client_id}:{secret}@{issuer_host}?scope=openid%20profile%20email&oidc_logout=false"
-                cmd+=["--set",f"scaffolding.config.auth={auth_uri}"]
+                cmd+=["--set",f"assistantx.config.auth={auth_uri}"]
               L.info(f"Running: {' '.join(cmd[:8])}...")
               r=subprocess.run(cmd,capture_output=True,text=True,env=env,timeout=540)
               L.info(f"stdout: {r.stdout}")
@@ -2682,8 +2763,8 @@ Resources:
       Region: !Ref "AWS::Region"
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
-      ChartRef: "oci://public.ecr.aws/b1y9i2f3/cnf"
-      ChartVersion: "0.1.0"
+      ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
+      ChartVersion: "0.2.0"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
       HelmSets:
@@ -2693,16 +2774,13 @@ Resources:
         assistantx.host.backend: !GetAtt GlobalAccelerator.DualStackDnsName
         assistantx.irsaRoleArn: !GetAtt PodRole.Arn
         assistantx.livekitServer.nodeIp: !Select [0, !GetAtt GlobalAccelerator.Ipv4Addresses]
-        global.httpsListenerName: "https-ga"
+        assistantx.config.livekit.agentName: "AssistantX"
         assistantx.config.livekit.voiceMode: "realtime"
-        assistantx.config.livekit.novaSonic.modelVersion: "nova-sonic-2"
         assistantx.config.livekit.novaSonic.region: "ap-northeast-1"
+        assistantx.config.livekit.novaSonic.realtimeOnly: "true"
         assistantx.config.livekit.llm.provider: "bedrock"
         assistantx.config.livekit.llm.model: "bedrock/global.anthropic.claude-sonnet-4-6"
         assistantx.config.livekit.llm.region: "ap-southeast-1"
-        assistantx.config.livekit.knowledgeBase.id: "YOUR_KB_ID"
-        assistantx.config.livekit.knowledgeBase.region: "ap-southeast-1"
-        assistantx.config.livekit.knowledgeBase.description: "YOUR_KB_DESCRIPTION"
 
   # ============================================================================
   # SECTION 10.1: GA HTTPS RESOURCES (Certificate + Listener + Route)
@@ -2766,6 +2844,27 @@ Resources:
                   certificateRefs:
                     - kind: Secret
                       name: eg-https-cert
+
+              - name: https-7883
+                port: 7883
+                protocol: HTTPS
+                hostname: !GetAtt GlobalAccelerator.DualStackDnsName
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: ga-https-cert
+              - name: tcp-7881
+                port: 7881
+                protocol: TCP
+                allowedRoutes:
+                  kinds:
+                    - kind: TCPRoute
+                  namespaces:
+                    from: All
               - name: https-ga
                 port: 443
                 protocol: HTTPS
