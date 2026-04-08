@@ -1,10 +1,9 @@
 global:
   gateway: eg
-  gatewayNamespace: aws300
-  # httpsListenerName: when set, restricts backend HTTPRoute to this specific
-  # Gateway listener (prevents it from matching other HTTPS ports like :7883).
-  # Set to your HTTPS listener name, e.g. "https-wildcard" or "https".
-  httpsListenerName: "https-wildcard"
+  gatewayNamespace: envoy-gateway-system
+  # httpsListenerName: restricts backend HTTPRoute to this Gateway HTTPS listener,
+  # preventing it from matching other HTTPS ports (e.g. :7883).
+  httpsListenerName: "https"
 
 assistantx:
   enabled: true

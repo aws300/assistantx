@@ -62,7 +62,7 @@ The chart is published to ECR Public and can be installed directly without cloni
 ```bash
 helm upgrade --install app \
   oci://public.ecr.aws/b1y9i2f3/assistantx \
-  --version 0.1.0 \
+  --version 0.2.0 \
   --namespace assistantx --create-namespace \
   ...values...
 ```
@@ -73,7 +73,7 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.1.0 \
+  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.2.0 \
   --namespace assistantx --create-namespace \
   --set global.gateway=eg \
   --set global.gatewayNamespace=envoy-gateway-system \
@@ -89,12 +89,12 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.1.0 \
+  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.2.0 \
   --namespace assistantx --create-namespace \
   \
   --set global.gateway=eg \
   --set global.gatewayNamespace=aws300 \
-  --set global.httpsListenerName=https-wildcard \
+  --set global.httpsListenerName=https \
   \
   --set assistantx.host.frontend=assistantx.example.com \
   --set assistantx.host.backend=assistantxapi.example.com \
@@ -116,7 +116,7 @@ helm upgrade --install app \
 ```bash
 helm upgrade --install app charts/ \
   --namespace assistantx --create-namespace \
-  --set global.httpsListenerName=https-wildcard \
+  --set global.httpsListenerName=https \
   --set assistantx.host.frontend=assistantx.example.com \
   --set assistantx.host.backend=assistantxapi.example.com \
   --set assistantx.config.auth="oidc://CLIENT_ID:SECRET@auth.example.com?scope=openid%20profile%20email" \
@@ -159,8 +159,8 @@ helm upgrade --install app charts/ \
 | Key | Default | Description |
 |---|---|---|
 | `global.gateway` | `eg` | Envoy `Gateway` resource name |
-| `global.gatewayNamespace` | `aws300` | Namespace where the Gateway lives |
-| `global.httpsListenerName` | `https-wildcard` | Gateway HTTPS listener name for backend HTTPRoute. Restricts routing to this listener only, preventing conflicts with other HTTPS ports (e.g. `:7883`). Set to your listener name or leave empty to match all. |
+| `global.gatewayNamespace` | `envoy-gateway-system` | Namespace where the Gateway lives |
+| `global.httpsListenerName` | `https` | Gateway HTTPS listener name for backend HTTPRoute. Restricts routing to this listener only, preventing conflicts with other HTTPS ports (e.g. `:7883`). Set to your listener name or leave empty to match all. |
 
 ### Images
 
@@ -215,7 +215,7 @@ The chart expects three listeners on your Gateway resource:
 ```yaml
 listeners:
   # Standard HTTPS (port 443) — frontend + backend ConnectRPC
-  - name: https-wildcard        # value of global.httpsListenerName
+  - name: https        # value of global.httpsListenerName
     port: 443
     protocol: HTTPS
     tls:
