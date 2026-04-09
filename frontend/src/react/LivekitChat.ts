@@ -29,6 +29,10 @@ import {
   ConnectionState,
   type RemoteParticipant,
 } from 'livekit-client';
+import {
+  KrispNoiseFilter,
+  isKrispNoiseFilterSupported,
+} from '@livekit/krisp-noise-filter';
 import { livekitClient } from '../api/client';
 import {
   executeAction,
@@ -385,7 +389,7 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
       const resp = await livekitClient.getToken({ scene });
       const r = new Room({
         adaptiveStream: true, dynacast: true,
-        audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audioCaptureDefaults: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
       });
       roomRef.current = r;
 
@@ -429,6 +433,32 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
 
       try { await r.localParticipant.setMicrophoneEnabled(true); }
       catch (e) { console.warn('[LivekitChat] Mic enable failed:', e); }
+
+      // Apply Krisp AI noise filter to microphone track
+      try {
+        const getMicTrack = () => {
+          const pub = r.localParticipant.getTrackPublication(Track.Source.Microphone);
+          return pub?.track ?? null;
+        };
+        let micTrack = getMicTrack();
+        // Track may not be published yet — poll briefly
+        if (!micTrack) {
+          await new Promise(res => setTimeout(res, 500));
+          micTrack = getMicTrack();
+        }
+        if (micTrack) {
+          if (isKrispNoiseFilterSupported()) {
+            const krisp = KrispNoiseFilter();
+            await micTrack.setProcessor(krisp as any);
+            console.info('[LivekitChat] Krisp noise filter enabled');
+          } else {
+            console.info('[LivekitChat] Krisp not supported, using native noiseSuppression fallback');
+            await micTrack.restartTrack({ noiseSuppression: true });
+          }
+        } else {
+          console.warn('[LivekitChat] Mic track not available for Krisp');
+        }
+      } catch (e) { console.warn('[LivekitChat] Krisp init failed, falling back to native:', e); }
 
       // Set room AND connected state together to prevent flash
       setRoom(r);
