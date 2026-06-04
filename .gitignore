@@ -41,6 +41,7 @@ frontend/coverage/
 
 # ── Playwright ────────────────────────────────────────────────────────────────
 .playwright-mcp/
+.playwright-cli/
 playwright-report/
 test-results/
 
