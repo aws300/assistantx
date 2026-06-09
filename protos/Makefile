@@ -9,7 +9,7 @@ all: gen
 
 gen: clean
 	@echo "Generating protobuf files (Go + TypeScript)..."
-	PATH="$$PATH:/home/core/go/bin" buf generate
+	buf generate
 	@echo "Done."
 	@echo "  Go -> $(GO_OUT)"
 	@echo "  TS -> $(TS_OUT)"
@@ -29,7 +29,7 @@ gen-python: clean-python
 			auth/v1/auth.proto; \
 	else \
 		echo "grpcio-tools not found, trying buf BSR plugins (requires internet)..."; \
-		PATH="$$PATH:/home/core/go/bin" buf generate --template buf.gen.python.yaml; \
+		buf generate --template buf.gen.python.yaml; \
 	fi
 	@echo "Adding __init__.py to generated Python packages..."
 	find $(PY_OUT) -type d -exec touch {}/__init__.py \;

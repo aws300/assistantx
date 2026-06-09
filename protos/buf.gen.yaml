@@ -19,15 +19,11 @@ plugins:
     opt:
       - paths=source_relative
 
-  # TypeScript: protobuf message types
+  # TypeScript: protobuf message types + Connect-ES service schemas
+  # (Connect-ES v2 generates service schemas directly into *_pb.ts —
+  #  the legacy protoc-gen-connect-es plugin is no longer required.)
   - local: protoc-gen-es
     out: ../frontend/src/gen
     opt:
       - target=ts
     include_imports: true
-
-  # TypeScript: Connect-ES service definitions
-  - local: protoc-gen-connect-es
-    out: ../frontend/src/gen
-    opt:
-      - target=ts
