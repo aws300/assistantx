@@ -62,5 +62,9 @@ assistantx:
     image: livekit/livekit-server:v1.9
     # nodeIp: external IP advertised in WebRTC ICE TCP candidates (NAT 1:1 mapping).
     # Set to the LoadBalancer/Global Accelerator IPv4 address reachable on :7881.
-    nodeIp: "166.117.138.22"
+    # This MUST be a static IP of the "nxdev" Global Accelerator that fronts
+    # assistantxapi.nx.run (TCP :7881 -> Envoy NLB -> LiveKit :7881). Using an IP
+    # that is not owned by that GA makes public WebRTC fail (browser gets an
+    # unreachable ICE candidate) while in-cluster still works.
+    nodeIp: "15.197.193.72"
 
