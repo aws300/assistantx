@@ -65,4 +65,8 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8080
 
+# Agent is a LiveKit worker with no HTTP server - check the process is alive
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD pgrep -f "agent start" > /dev/null || exit 1
+
 CMD ["agent", "start"]

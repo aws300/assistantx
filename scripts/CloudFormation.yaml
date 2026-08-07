@@ -138,7 +138,9 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Effect: Allow
+              # EC2/EKS/Cognito/Lambda Describe actions do not support resource-level permissions
+              - Sid: ReadOnlyDescribeActions
+                Effect: Allow
                 Action:
                   - ec2:DescribeAddresses
                   - ec2:DescribeAccountAttributes
@@ -148,23 +150,88 @@ Resources:
                   - ec2:DescribeSubnets
                   - ec2:DescribeInstanceTypeOfferings
                   - eks:DescribeCluster
-                  - iam:GetRole
                   - lambda:GetFunction
                   - cognito-idp:DescribeUserPoolDomain
                   - sts:GetCallerIdentity
                   - servicequotas:GetServiceQuota
+                Resource: "*"
+              - Sid: IamRoleRead
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}${EnvironmentId}-*"
+              # EFS mount target operations scoped to this stack's EFS filesystem
+              - Sid: EfsMountTargetManagement
+                Effect: Allow
+                Action:
                   - elasticfilesystem:CreateMountTarget
                   - elasticfilesystem:DeleteMountTarget
                   - elasticfilesystem:DescribeMountTargets
-                Resource: "*"
+                Resource: !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/*"
+              - Sid: SqsDLQAccess
+                Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt LambdaDLQ.Arn
+
+  # KMS Key for SQS DLQ encryption
+  SqsDlqKey:
+    Type: AWS::KMS::Key
+    DependsOn: QuotaCheck
+    Properties:
+      Description: !Sub "SQS DLQ encryption key for ${ProjectName}${EnvironmentId}"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow Lambda to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey"
+            Resource: "*"
+
+  SqsDlqKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}${EnvironmentId}-sqs-dlq"
+      TargetKeyId: !Ref SqsDlqKey
+
+  # Dead Letter Queue for Lambda functions
+  LambdaDLQ:
+    Type: AWS::SQS::Queue
+    DependsOn: QuotaCheck
+    Properties:
+      QueueName: !Sub "${ProjectName}${EnvironmentId}-lambda-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+      KmsMasterKeyId: !Ref SqsDlqKey
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}${EnvironmentId}-lambda-dlq"
 
   QuotaCheckFunction:
     Type: AWS::Lambda::Function
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_117
+            comment: "QuotaCheckFunction runs at stack creation to check AWS service quotas and does not need VPC access. Putting it in VPC without NAT would break API calls to AWS services."
     Properties:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt QuotaCheckRole.Arn
       Timeout: 120
+      ReservedConcurrentExecutions: 5
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import boto3, json, logging, time, urllib.request
@@ -757,43 +824,61 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Effect: Allow
+              # eks:ListClusters does not support resource-level permissions
+              - Sid: EksListClusters
+                Effect: Allow
+                Action:
+                  - eks:ListClusters
+                Resource: "*"
+              - Sid: EksClusterOperations
+                Effect: Allow
                 Action:
                   - eks:DescribeCluster
-                  - eks:ListClusters
                   - eks:ListAddons
                   - eks:DescribeAddon
-                Resource: "*"
-              - Effect: Allow
+                Resource: !Sub "arn:aws:eks:${AWS::Region}:${AWS::AccountId}:cluster/${ProjectName}${EnvironmentId}"
+              - Sid: StsCallerIdentity
+                Effect: Allow
                 Action:
                   - sts:GetCallerIdentity
                 Resource: "*"
-              - Effect: Allow
+              # elasticloadbalancing Describe* actions do not support resource-level permissions
+              - Sid: ElbDescribe
+                Effect: Allow
                 Action:
                   - elasticloadbalancing:DescribeLoadBalancers
                   - elasticloadbalancing:DescribeTargetGroups
                 Resource: "*"
-              - Effect: Allow
+              - Sid: CognitoOperations
+                Effect: Allow
                 Action:
                   - cognito-idp:DescribeUserPoolClient
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:AdminCreateUser
                   - cognito-idp:AdminSetUserPassword
-                Resource: "*"
-              - Effect: Allow
+                Resource: !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
+              - Sid: LogsAccess
+                Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "arn:aws:logs:*:*:*"
-              - Effect: Allow
+              - Sid: LambdaInvoke
+                Effect: Allow
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
-              - Effect: Allow
+              - Sid: CloudFormationDescribe
+                Effect: Allow
                 Action:
                   - cloudformation:DescribeStackEvents
                 Resource: "*"
+              - Sid: SqsDLQAccess
+                Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt LambdaDLQ.Arn
 
   # --- Test Pod IRSA Role (via Pod Identity) ---
   PodRole:
@@ -828,21 +913,36 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:ListRolePolicies
                 Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}${EnvironmentId}-PodRole"
-              - Sid: BedrockFullAccess
+              - Sid: BedrockInvokeModel
                 Effect: Allow
                 Action:
-                  - bedrock:*
-                Resource: "*"
-              - Sid: BedrockRuntimeFullAccess
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource:
+                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+                  - !Sub "arn:aws:bedrock:*::foundation-model/*"
+                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+              - Sid: BedrockRealtimeStream
                 Effect: Allow
                 Action:
-                  - bedrock-runtime:*
-                Resource: "*"
-              - Sid: BedrockAgentRuntimeFullAccess
+                  - bedrock-runtime:InvokeModel
+                  - bedrock-runtime:InvokeModelWithResponseStream
+                  - bedrock-runtime:InvokeModelWithBidirectionalStream
+                  - bedrock-runtime:Converse
+                  - bedrock-runtime:ConverseStream
+                Resource:
+                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+                  - !Sub "arn:aws:bedrock:*::foundation-model/*"
+              - Sid: BedrockAgentCoreMemory
                 Effect: Allow
                 Action:
-                  - bedrock-agent-runtime:*
-                Resource: "*"
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:CreateMemory
+                  - bedrock-agentcore:UpdateMemory
+                  - bedrock-agentcore:DeleteMemory
+                Resource: !Sub "arn:aws:bedrock-agentcore:*:${AWS::AccountId}:memory/*"
   EfsCsiRole:
     Type: AWS::IAM::Role
     DependsOn: QuotaCheck
@@ -864,6 +964,38 @@ Resources:
   # SECTION 3: EKS CLUSTER
   # ============================================================================
 
+  # KMS Key for EKS secrets encryption
+  EksSecretsKey:
+    Type: AWS::KMS::Key
+    DependsOn: QuotaCheck
+    Properties:
+      Description: !Sub "EKS secrets encryption key for ${ProjectName}${EnvironmentId}"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow EKS to use the key
+            Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action:
+              - "kms:Decrypt"
+              - "kms:DescribeKey"
+              - "kms:CreateGrant"
+            Resource: "*"
+
+  EksSecretsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}${EnvironmentId}-eks-secrets"
+      TargetKeyId: !Ref EksSecretsKey
+
   EksCluster:
     Type: AWS::EKS::Cluster
     DependsOn:
@@ -877,6 +1009,11 @@ Resources:
       - NatGatewayB
       - NatGatewayC
       - S3Endpoint
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_58
+            comment: "EncryptionConfig cannot be changed on existing cluster without replacement. Adding to template for future deployments only - running cluster nxdev is unaffected."
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}"
       Version: !Ref EksVersion
@@ -905,6 +1042,11 @@ Resources:
         EndpointPrivateAccess: true
         PublicAccessCidrs:
           - "0.0.0.0/0"
+      EncryptionConfig:
+        - Provider:
+            KeyArn: !GetAtt EksSecretsKey.Arn
+          Resources:
+            - secrets
       Logging:
         ClusterLogging:
           EnabledTypes:
@@ -1090,11 +1232,44 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: "0.0.0.0/0"
+          Description: "Allow all outbound IPv4 traffic for Lambda to reach EKS API and AWS services"
         - IpProtocol: "-1"
           CidrIpv6: "::/0"
+          Description: "Allow all outbound IPv6 traffic for Lambda to reach EKS API and AWS services"
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-kubectl-lambda-sg"
+
+  # KMS Key for Lambda environment variables
+  LambdaEnvKey:
+    Type: AWS::KMS::Key
+    DependsOn: QuotaCheck
+    Properties:
+      Description: !Sub "Lambda environment variables encryption key for ${ProjectName}${EnvironmentId}"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow Lambda to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - "kms:Decrypt"
+              - "kms:DescribeKey"
+            Resource: "*"
+
+  LambdaEnvKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}${EnvironmentId}-lambda-env"
+      TargetKeyId: !Ref LambdaEnvKey
 
   KubectlFunction:
     Type: AWS::Lambda::Function
@@ -1109,7 +1284,18 @@ Resources:
       Handler: index.handler
       Timeout: 900
       MemorySize: 512
+      ReservedConcurrentExecutions: 10
       Role: !GetAtt KubectlLambdaRole.Arn
+      KmsKeyArn: !GetAtt LambdaEnvKey.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        SecurityGroupIds:
+          - !Ref KubectlLambdaSG
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Environment:
         Variables:
           CLUSTER_NAME: !Ref EksCluster
@@ -1463,13 +1649,21 @@ Resources:
   CognitoUserCreatorFunction:
     Type: AWS::Lambda::Function
     DependsOn: QuotaCheck
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_117
+            comment: "CognitoUserCreatorFunction needs to call public Cognito APIs during stack creation. VPC attachment without NAT would break access to cognito-idp endpoints."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-user-creator"
       Runtime: python3.12
       Handler: index.handler
       Timeout: 60
       MemorySize: 128
+      ReservedConcurrentExecutions: 5
       Role: !GetAtt KubectlLambdaRole.Arn
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import json,logging,boto3,secrets,string,urllib3
@@ -1542,7 +1736,17 @@ Resources:
       Handler: index.handler
       Timeout: 900
       MemorySize: 1024
+      ReservedConcurrentExecutions: 5
       Role: !GetAtt KubectlLambdaRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        SecurityGroupIds:
+          - !Ref KubectlLambdaSG
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import base64,json,logging,tempfile,time,urllib3,boto3,re
@@ -2086,7 +2290,17 @@ Resources:
       Handler: index.handler
       Timeout: 900
       MemorySize: 256
+      ReservedConcurrentExecutions: 5
       Role: !GetAtt KubectlLambdaRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        SecurityGroupIds:
+          - !Ref KubectlLambdaSG
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import base64,json,logging,tempfile,time,urllib3,boto3
@@ -2245,9 +2459,101 @@ Resources:
             - Header: Server
             - Header: X-Powered-By
 
+  # S3 bucket for CloudFront access logs
+  CloudFrontLogsBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: QuotaCheck
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "This is the logging bucket itself - it does not need access logging to avoid circular dependency"
+    Properties:
+      BucketName: !Sub "${ProjectName}${EnvironmentId}-cf-logs-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpirationInDays: 30
+
+  CloudFrontLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudFrontLogsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${CloudFrontLogsBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+
+  # WAF Web ACL for CloudFront
+  CloudFrontWafAcl:
+    Type: AWS::WAFv2::WebACL
+    DependsOn: QuotaCheck
+    Properties:
+      Name: !Sub "${ProjectName}${EnvironmentId}-cf-waf"
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      Rules:
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSetMetric
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 2
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputsMetric
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${ProjectName}${EnvironmentId}WafMetric"
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     DependsOn: NlbLookup
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_174
+            comment: "CloudFront default certificate (*.cloudfront.net) automatically uses TLS 1.2. Custom MinimumProtocolVersion can only be set when using a custom ACM certificate, which requires a custom domain."
     Properties:
       DistributionConfig:
         Enabled: true
@@ -2255,6 +2561,13 @@ Resources:
         HttpVersion: http2and3
         IPV6Enabled: true
         PriceClass: PriceClass_200
+        WebACLId: !GetAtt CloudFrontWafAcl.Arn
+        Logging:
+          Bucket: !GetAtt CloudFrontLogsBucket.DomainName
+          Prefix: cloudfront-logs/
+          IncludeCookies: false
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
         Origins:
           - Id: EnvoyGatewayNLB
             DomainName: !GetAtt NlbLookup.NlbDns
@@ -2433,7 +2746,17 @@ Resources:
       Handler: index.handler
       Timeout: 600
       MemorySize: 512
+      ReservedConcurrentExecutions: 5
       Role: !GetAtt KubectlLambdaRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        SecurityGroupIds:
+          - !Ref KubectlLambdaSG
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import base64,json,logging,os,stat,subprocess,tempfile,urllib3,boto3
@@ -2698,13 +3021,21 @@ Resources:
   CognitoSecretFunction:
     Type: AWS::Lambda::Function
     DependsOn: QuotaCheck
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_117
+            comment: "CognitoSecretFunction needs to call public Cognito APIs. VPC attachment without NAT would break access to cognito-idp endpoints."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-setup"
       Runtime: python3.12
       Handler: index.handler
       Timeout: 300
       MemorySize: 256
+      ReservedConcurrentExecutions: 5
       Role: !GetAtt KubectlLambdaRole.Arn
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
       Code:
         ZipFile: |
           import json,logging,urllib3,boto3

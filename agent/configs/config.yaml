@@ -2,8 +2,8 @@
 
 livekit:
   url: "wss://livekit.nx.run"
-  api_key: "REDACTED-LIVEKIT-API-KEY"
-  api_secret: "REDACTED-LIVEKIT-API-SECRET"
+  api_key: "CHANGE_ME"
+  api_secret: "CHANGE_ME"
 
 # Voice mode: "realtime" (Nova Sonic) or "traditional" (STT+LLM+TTS)
 voice_mode: "realtime"
@@ -46,7 +46,7 @@ llm:
   model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
   region: "us-west-2"
   base_url: "http://litellm.aws300.svc.cluster.local:8080/v1"
-  api_key: "REDACTED-LITELLM-API-KEY"
+  api_key: "CHANGE_ME"
 
 tts:
   model: "cosyvoice-v3"

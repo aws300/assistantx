@@ -7,7 +7,7 @@ dependencies:
 
 livekit:
   url: "wss://livekit.nx.run"
-  apiKey: "REDACTED-LIVEKIT-API-KEY"
-  apiSecret: "REDACTED-LIVEKIT-API-SECRET"
+  apiKey: "CHANGE_ME"
+  apiSecret: "CHANGE_ME"
   agentName: "AssistantX"
   skillsDir: "/app/skills/devices"

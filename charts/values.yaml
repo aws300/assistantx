@@ -8,20 +8,27 @@ global:
 assistantx:
   enabled: true
   image:
-    backend: public.ecr.aws/b1y9i2f3/assistantx:backend
-    agent: public.ecr.aws/b1y9i2f3/assistantx:agent
-    frontend: public.ecr.aws/b1y9i2f3/assistantx:frontend
+    backend: public.ecr.aws/r0l7m8u0/assistantx:backend
+    agent: public.ecr.aws/r0l7m8u0/assistantx:agent
+    frontend: public.ecr.aws/r0l7m8u0/assistantx:frontend
   host:
     frontend: assistantx.nx.run
     # backend: when set, backend RPCs are served on this hostname (separate domain).
     # Leave empty to share host.frontend via path-based routing.
     backend: "assistantxapi.nx.run"
   config:
-    auth: "oidc://u5HewIf9_gccM3O5Q-nwAA:@account.nx.run?scope=offline%20profile%20%20email%20%20openid"
+    # OIDC provider: AWS Cognito user pool us-west-2_uXkPGK5dS (CloudFormation stack "nx").
+    # App client "assistantx-app" — callbacks registered for https://assistantx.nx.run/auth/oidc/callback.
+    # oidc_logout=false: Cognito exposes a non-standard /logout endpoint (logout_uri) rather
+    # than RP-initiated end_session with post_logout_redirect_uri.
+    auth: "oidc://1k7hr0fv9h5235unvt4qglbnr4:1v900s79uu7hbo0tl33hkvv8ok0f311bmigetbaqo482aik9blpg@cognito-idp.us-west-2.amazonaws.com/us-west-2_uXkPGK5dS?scope=openid%20profile%20email&oidc_logout=false"
     livekit:
       # url is derived automatically as wss://<host.backend>:7883
-      apiKey: "REDACTED-LIVEKIT-API-KEY"
-      apiSecret: "REDACTED-LIVEKIT-API-SECRET"
+      # WARNING: These are default credentials for development only.
+      # Production deployments MUST override via --set or sealed secrets.
+      # DO NOT commit real production credentials to this file.
+      apiKey: "API61044af542dd01"
+      apiSecret: "dadb51c033c967341bcff8348b9fd4c2261e0ff63178a6014ed26f803af798a6"
       agentName: "AssistantX"
       voiceMode: "realtime"
       novaSonic:
@@ -51,7 +58,10 @@ assistantx:
         description: "充电桩相关问题，包括充电桩使用方法、操作指南、充电费用、计费方式、故障排除、常见问题、充电安全注意事项、充电桩技术规格等"
   # irsaRoleArn: when set, creates a ServiceAccount annotated with eks.amazonaws.com/role-arn
   # and binds it to the backend Deployment for IRSA credential injection.
-  irsaRoleArn: "arn:aws:iam::867344450900:role/NxlabsEKS_JumpRole"
+  # PodRole from CloudFormation stack "nx" — carries the Bedrock (Nova Sonic,
+  # Knowledge Base, AgentCore Memory) permissions the agent needs, trusted by
+  # the nxdev EKS OIDC provider.
+  irsaRoleArn: "arn:aws:iam::131166810173:role/nxdev-PodRole"
 
   # livekitServer: deploy LiveKit server in-cluster (disabled by default).
   # When enabled, uses config.livekit.apiKey/apiSecret for the server keys.
@@ -66,5 +76,6 @@ assistantx:
     # assistantxapi.nx.run (TCP :7881 -> Envoy NLB -> LiveKit :7881). Using an IP
     # that is not owned by that GA makes public WebRTC fail (browser gets an
     # unreachable ICE candidate) while in-cluster still works.
-    nodeIp: "15.197.193.72"
+    # Static IPv4 of the "nxdev" Global Accelerator (TCP :7881 -> Envoy NLB -> LiveKit :7881).
+    nodeIp: "166.117.104.189"
 

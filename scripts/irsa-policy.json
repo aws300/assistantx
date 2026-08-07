@@ -18,28 +18,45 @@
       "Resource": "arn:aws:iam::__ACCOUNT_ID__:role/__ROLE_NAME__"
     },
     {
-      "Sid": "BedrockFullAccess",
+      "Sid": "BedrockInvokeModel",
       "Effect": "Allow",
       "Action": [
-        "bedrock:*"
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:bedrock:*:__ACCOUNT_ID__:inference-profile/*",
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:*:__ACCOUNT_ID__:knowledge-base/*"
+      ]
     },
     {
-      "Sid": "BedrockRuntimeFullAccess",
+      "Sid": "BedrockRealtimeStream",
       "Effect": "Allow",
       "Action": [
-        "bedrock-runtime:*"
+        "bedrock-runtime:InvokeModel",
+        "bedrock-runtime:InvokeModelWithResponseStream",
+        "bedrock-runtime:InvokeModelWithBidirectionalStream",
+        "bedrock-runtime:Converse",
+        "bedrock-runtime:ConverseStream"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:bedrock:*:__ACCOUNT_ID__:inference-profile/*",
+        "arn:aws:bedrock:*::foundation-model/*"
+      ]
     },
     {
-      "Sid": "BedrockAgentRuntimeFullAccess",
+      "Sid": "BedrockAgentCoreMemory",
       "Effect": "Allow",
       "Action": [
-        "bedrock-agent-runtime:*"
+        "bedrock-agentcore:GetMemory",
+        "bedrock-agentcore:CreateMemory",
+        "bedrock-agentcore:UpdateMemory",
+        "bedrock-agentcore:DeleteMemory"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:bedrock-agentcore:*:__ACCOUNT_ID__:memory/*"
     }
   ]
 }

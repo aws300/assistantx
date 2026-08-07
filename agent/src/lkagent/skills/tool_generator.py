@@ -1,3 +1,16 @@
+# Copyright 2026 AssistantX Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Tool Generator Module
 Generates Livekit function tools from YAML skill configurations.
@@ -181,7 +194,9 @@ class ToolGenerator:
                             parsed = ast.literal_eval(value.replace("'", '"').replace('"', "'"))
                             if isinstance(parsed, dict) and 'value' in parsed:
                                 value = parsed['value']
-                        except:
+                        except (ValueError, SyntaxError):
+                            # literal_eval failed; fall back to treating value as-is
+                            logger.debug(f"Failed to parse dict string for parameter {param.name}: {value}")
                             pass
                     
                     # Handle color mapping for ambient light

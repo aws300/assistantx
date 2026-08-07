@@ -1,4 +1,17 @@
 #!/bin/bash
+# Copyright 2026 AssistantX Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # deploy.sh — Build Docker images, push Helm chart OCI, and deploy to EKS
 #
 # Usage:
@@ -20,8 +33,10 @@ set -euo pipefail
 # ============================================================
 # Config
 # ============================================================
-# ECR public registry (images + Helm chart)
-ECR_PUBLIC_REGISTRY="public.ecr.aws/b1y9i2f3"
+# ECR public registry (images + Helm chart).
+# Override with ECR_PUBLIC_REGISTRY to publish under a different registry alias;
+# pushing requires that the alias belong to the authenticated AWS account.
+ECR_PUBLIC_REGISTRY="${ECR_PUBLIC_REGISTRY:-public.ecr.aws/r0l7m8u0}"
 ECR_PUBLIC_IMAGE="${ECR_PUBLIC_REGISTRY}/assistantx"
 
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-app}"
@@ -245,7 +260,7 @@ push_chart() {
     helm push "$pkg_file" "oci://${ECR_PUBLIC_REGISTRY}" \
         || fail "helm push failed"
 
-    info "Helm chart pushed: oci://${ECR_PUBLIC_REGISTRY}/cnf:${version}"
+    info "Helm chart pushed: oci://${ECR_PUBLIC_REGISTRY}/assistantx:${version}"
     log "========== Helm chart pushed =========="
 }
 
