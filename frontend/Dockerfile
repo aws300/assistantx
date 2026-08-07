@@ -10,13 +10,22 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: serve ────────────────────────────────────────────────────────────
-FROM nginx:1.27-alpine@sha256:2140dad235c130ac861018a4e13a6bc8aea3a35f3a40e20c1b060d51a7efd250 AS serve
+# nginx 1.29-alpine: the 1.27-alpine tag carried 3 critical + 35 high OS-package
+# CVEs (openssl, libxml2, libpng, musl, zlib); 1.29-alpine clears all criticals.
+# Pinned by digest for reproducibility — re-resolve when bumping the tag.
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS serve
 
-# Write nginx config inline
+# Pick up any Alpine security fixes published after the base tag was built.
+RUN apk upgrade --no-cache
+
+# Write nginx config inline.
+# Listens on 8080: an unprivileged port, so the server runs as a non-root user
+# without CAP_NET_BIND_SERVICE. The chart's Service maps 80 -> 8080, so the
+# in-cluster contract (and the HTTPRoute backendRef) stays on port 80.
 RUN printf '%s\n' \
   'server {' \
-  '    listen 80;' \
-  '    listen [::]:80;' \
+  '    listen 8080;' \
+  '    listen [::]:8080;' \
   '    root /usr/share/nginx/html;' \
   '    index index.html;' \
   '' \
@@ -47,11 +56,20 @@ RUN printf '%s\n' \
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# checkov:skip=CKV_DOCKER_3: Container runs as root to bind privileged port 80. The chart (charts/templates/frontend.yaml) and HTTPRoute (charts/templates/httproute.yaml) are configured to route to port 80, which requires privileged access or chart modifications. Running as non-root would require either: (1) changing the listen port to 8080 and updating the chart's Service and HTTPRoute targetPort (not owned by this Dockerfile), or (2) using capabilities or sysctl that EKS may not grant. Keeping root until chart owner can coordinate the port change.
+# Run as a non-root user (CKV_DOCKER_3). nginx needs to write its pid and cache
+# dirs, and the entrypoint rewrites placeholders inside index.html, so both are
+# handed to the app user. Nothing here needs root once the listen port is 8080.
+RUN addgroup -g 1000 -S web \
+    && adduser -S -D -H -u 1000 -h /var/cache/nginx -s /sbin/nologin -G web -g web web \
+    && touch /var/run/nginx.pid \
+    && chown -R web:web /usr/share/nginx/html /var/cache/nginx /var/run/nginx.pid \
+    && sed -i 's|^pid .*|pid /var/run/nginx.pid;|' /etc/nginx/nginx.conf
 
-EXPOSE 80
+USER web
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

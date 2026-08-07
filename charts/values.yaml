@@ -7,6 +7,12 @@ global:
 
 assistantx:
   enabled: true
+  # existingSecretName: bring your own Secret instead of letting the chart render
+  # credentials from these values — for External Secrets Operator, Sealed Secrets,
+  # or AWS Secrets Manager. It must supply three keys: backend-config.yaml,
+  # agent-config.yaml and livekit-config.yaml. When set, the chart renders no
+  # Secret of its own and config.auth / config.livekit.apiKey / apiSecret are unused.
+  existingSecretName: ""
   image:
     backend: public.ecr.aws/r0l7m8u0/assistantx:backend
     agent: public.ecr.aws/r0l7m8u0/assistantx:agent
@@ -17,18 +23,26 @@ assistantx:
     # Leave empty to share host.frontend via path-based routing.
     backend: "assistantxapi.nx.run"
   config:
-    # OIDC provider: AWS Cognito user pool us-west-2_uXkPGK5dS (CloudFormation stack "nx").
-    # App client "assistantx-app" — callbacks registered for https://assistantx.nx.run/auth/oidc/callback.
-    # oidc_logout=false: Cognito exposes a non-standard /logout endpoint (logout_uri) rather
-    # than RP-initiated end_session with post_logout_redirect_uri.
-    auth: "oidc://1k7hr0fv9h5235unvt4qglbnr4:1v900s79uu7hbo0tl33hkvv8ok0f311bmigetbaqo482aik9blpg@cognito-idp.us-west-2.amazonaws.com/us-west-2_uXkPGK5dS?scope=openid%20profile%20email&oidc_logout=false"
+    # OIDC DSN — REQUIRED, and intentionally empty: it embeds a client secret, so it
+    # must never be committed. Supply it at install time:
+    #   --set-string assistantx.config.auth="oidc://CLIENT_ID:CLIENT_SECRET@ISSUER?scope=..."
+    # or via a private values file, or bring your own Secret with
+    #   --set assistantx.existingSecretName=my-assistantx-secret
+    #
+    # Format: oidc://CLIENT_ID:CLIENT_SECRET@ISSUER_HOST/PATH?scope=<url-encoded>
+    # Add oidc_logout=false for providers (e.g. Cognito) that expose a non-standard
+    # logout_uri endpoint instead of RP-initiated end_session.
+    auth: ""
     livekit:
       # url is derived automatically as wss://<host.backend>:7883
-      # WARNING: These are default credentials for development only.
-      # Production deployments MUST override via --set or sealed secrets.
-      # DO NOT commit real production credentials to this file.
-      apiKey: "API61044af542dd01"
-      apiSecret: "dadb51c033c967341bcff8348b9fd4c2261e0ff63178a6014ed26f803af798a6"
+      # REQUIRED, and intentionally empty — these are credentials and must not be
+      # committed. Supply them at install time:
+      #   --set-string assistantx.config.livekit.apiKey=APIxxxxxxxxxxxx
+      #   --set-string assistantx.config.livekit.apiSecret=<random 32+ bytes>
+      # The chart renders them into a Secret and the in-cluster LiveKit server
+      # keys itself from the same pair, so they only need to agree with each other.
+      apiKey: ""
+      apiSecret: ""
       agentName: "AssistantX"
       voiceMode: "realtime"
       novaSonic:

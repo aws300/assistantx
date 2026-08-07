@@ -2,11 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Scaffolding Helm Chart Values",
   "type": "object",
-  "required": ["global", "assistantx"],
+  "required": [
+    "global",
+    "assistantx"
+  ],
   "properties": {
     "global": {
       "type": "object",
-      "required": ["gateway", "gatewayNamespace"],
+      "required": [
+        "gateway",
+        "gatewayNamespace"
+      ],
       "properties": {
         "gateway": {
           "type": "string",
@@ -22,7 +28,10 @@
     },
     "assistantx": {
       "type": "object",
-      "required": ["host", "config"],
+      "required": [
+        "host",
+        "config"
+      ],
       "properties": {
         "enabled": {
           "type": "boolean"
@@ -48,7 +57,9 @@
         },
         "host": {
           "type": "object",
-          "required": ["frontend"],
+          "required": [
+            "frontend"
+          ],
           "properties": {
             "frontend": {
               "type": "string",
@@ -63,13 +74,14 @@
         },
         "config": {
           "type": "object",
-          "required": ["auth"],
+          "required": [
+            "auth"
+          ],
           "properties": {
             "auth": {
               "type": "string",
-              "minLength": 1,
-              "pattern": "^oidc://",
-              "description": "OIDC connection string format oidc://CLIENT_ID:CLIENT_SECRET@ISSUER with query params for scope"
+              "pattern": "^$|^oidc://",
+              "description": "OIDC connection string. Empty in values.yaml because it embeds a client secret; supply it at install time with --set-string, a private values file, or assistantx.existingSecretName. The chart fails the render with a required-value error if it is still empty and no existing Secret is named."
             }
           }
         },
@@ -77,6 +89,10 @@
           "type": "string",
           "description": "IAM Role ARN for IRSA. When set, creates a ServiceAccount with eks.amazonaws.com/role-arn annotation.",
           "pattern": "^$|^arn:aws:iam::[0-9]{12}:role/.+"
+        },
+        "existingSecretName": {
+          "type": "string",
+          "description": "Name of a pre-existing Secret supplying backend-config.yaml, agent-config.yaml and livekit-config.yaml. When set, the chart renders no Secret and the credential values are unused."
         }
       }
     }

@@ -80,12 +80,22 @@ Parameters:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
     Default: ""
+  CloudFrontCertificateArn:
+    Type: String
+    Description: "Optional ACM certificate ARN in us-east-1 for the CloudFront distribution. When set, the viewer certificate enforces a TLSv1.2_2021 minimum. When empty, CloudFront's default *.cloudfront.net certificate is used (it negotiates TLS 1.2+ but the minimum cannot be declared)."
+    Default: ""
+    AllowedPattern: '^$|^arn:aws:acm:us-east-1:[0-9]{12}:certificate/.+'
+  CloudFrontAliases:
+    Type: CommaDelimitedList
+    Description: "Optional CNAMEs for the CloudFront distribution. Required when CloudFrontCertificateArn is set, and each must be covered by that certificate."
+    Default: ""
   Tags:
     Type: String
     Description: 'JSON object of tags to apply to all resources (e.g. {"Environment":"prod","Team":"platform"})'
     Default: "{}"
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
+  HasCloudFrontCert: !Not [!Equals [!Ref CloudFrontCertificateArn, ""]]
 
 # ==============================================================================
 # MAPPINGS
@@ -187,7 +197,8 @@ Resources:
   # KMS Key for SQS DLQ encryption
   SqsDlqKey:
     Type: AWS::KMS::Key
-    DependsOn: QuotaCheck
+    # No DependsOn: QuotaCheck — the Lambda functions that consume this key are
+    # themselves gated on QuotaCheck, so depending on it here closes a cycle.
     Properties:
       Description: !Sub "SQS DLQ encryption key for ${ProjectName}${EnvironmentId}"
       EnableKeyRotation: true
@@ -218,7 +229,9 @@ Resources:
   # Dead Letter Queue for Lambda functions
   LambdaDLQ:
     Type: AWS::SQS::Queue
-    DependsOn: QuotaCheck
+    # No DependsOn: the Lambda functions that target this queue are themselves
+    # gated on QuotaCheck, so depending on it here would close a cycle
+    # (LambdaDLQ -> QuotaCheck -> QuotaCheckFunction -> LambdaDLQ).
     Properties:
       QueueName: !Sub "${ProjectName}${EnvironmentId}-lambda-dlq"
       MessageRetentionPeriod: 1209600  # 14 days
@@ -1576,7 +1589,8 @@ Resources:
   # KMS Key for Lambda environment variables
   LambdaEnvKey:
     Type: AWS::KMS::Key
-    DependsOn: QuotaCheck
+    # No DependsOn: QuotaCheck — the Lambda functions that consume this key are
+    # themselves gated on QuotaCheck, so depending on it here closes a cycle.
     Properties:
       Description: !Sub "Lambda environment variables encryption key for ${ProjectName}${EnvironmentId}"
       EnableKeyRotation: true
@@ -2172,7 +2186,7 @@ Resources:
               if group:
                 cog.admin_add_user_to_group(UserPoolId=pool_id,Username=uname,GroupName=group)
                 L.info(f"Added {uname} to group {group}")
-              send_cfn(event,ctx,"SUCCESS",data={"Username":username,"Password":password},pid="cognito-admin-user")
+              send_cfn(event,ctx,"SUCCESS",data={"Username":username,"Password":password},pid="cognito-admin-user")  # checkov:skip=CKV_SECRET_6: Python variable reference in inline Lambda code, not a literal credential; the admin password is generated at runtime
             except Exception as e:
               L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
 
@@ -2786,7 +2800,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_174
-            comment: "CloudFront default certificate (*.cloudfront.net) automatically uses TLS 1.2. Custom MinimumProtocolVersion can only be set when using a custom ACM certificate, which requires a custom domain."
+            comment: "MinimumProtocolVersion TLSv1.2_2021 is enforced whenever CloudFrontCertificateArn is supplied. The fallback branch uses the default *.cloudfront.net certificate, and CloudFront rejects MinimumProtocolVersion in that case; the default certificate negotiates TLS 1.2+ regardless."
     Properties:
       DistributionConfig:
         Enabled: true
@@ -2799,8 +2813,17 @@ Resources:
           Bucket: !GetAtt CloudFrontLogsBucket.DomainName
           Prefix: cloudfront-logs/
           IncludeCookies: false
+        # CKV_AWS_174: when an ACM certificate is supplied the viewer policy pins a
+        # TLSv1.2_2021 minimum. CloudFront rejects MinimumProtocolVersion together
+        # with the default *.cloudfront.net certificate, so that branch omits it.
         ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+          !If
+            - HasCloudFrontCert
+            - AcmCertificateArn: !Ref CloudFrontCertificateArn
+              SslSupportMethod: sni-only
+              MinimumProtocolVersion: TLSv1.2_2021
+            - CloudFrontDefaultCertificate: true
+        Aliases: !If [HasCloudFrontCert, !Ref CloudFrontAliases, !Ref "AWS::NoValue"]
         Origins:
           - Id: EnvoyGatewayNLB
             DomainName: !GetAtt NlbLookup.NlbDns
@@ -3052,7 +3075,7 @@ Resources:
               if pool_id and client_id:
                 cog=sess.client("cognito-idp")
                 resp=cog.describe_user_pool_client(UserPoolId=pool_id,ClientId=client_id)
-                secret=resp["UserPoolClient"].get("ClientSecret","")
+                secret=resp["UserPoolClient"].get("ClientSecret","")  # checkov:skip=CKV_SECRET_6: Python variable holding a Cognito API response field, not a literal credential
               # Setup kubeconfig
               helm=install_helm()
               eks=sess.client("eks");ci=eks.describe_cluster(name=cn)["cluster"]
@@ -3286,7 +3309,7 @@ Resources:
               cog=sess.client("cognito-idp")
               # Get client secret
               resp=cog.describe_user_pool_client(UserPoolId=pool_id,ClientId=client_id)
-              secret=resp["UserPoolClient"].get("ClientSecret","")
+              secret=resp["UserPoolClient"].get("ClientSecret","")  # checkov:skip=CKV_SECRET_6: Python variable holding a Cognito API response field, not a literal credential
               issuer=f"https://cognito-idp.{region}.amazonaws.com/{pool_id}"
               # Update callback URLs
               callbacks=[];logouts=[]
@@ -3307,7 +3330,7 @@ Resources:
                 AllowedOAuthScopes=["openid","profile","email"],
                 SupportedIdentityProviders=["COGNITO"],
                 ExplicitAuthFlows=["ALLOW_USER_AUTH","ALLOW_USER_SRP_AUTH","ALLOW_REFRESH_TOKEN_AUTH"])
-              send_cfn(event,ctx,"SUCCESS",data={"CognitoIssuer":issuer,"ClientSecret":secret},pid="cognito-setup")
+              send_cfn(event,ctx,"SUCCESS",data={"CognitoIssuer":issuer,"ClientSecret":secret},pid="cognito-setup")  # checkov:skip=CKV_SECRET_6: Python variable reference in a CloudFormation custom-resource response, not a literal credential
             except Exception as e:
               L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
             except Exception as e:

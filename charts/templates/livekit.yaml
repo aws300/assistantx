@@ -20,27 +20,9 @@
 #     protocol: TCP
 # ============================================================
 
-# ── ConfigMap ─────────────────────────────────────────────────────────────
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: assistantx-livekit-config
-  namespace: {{ .Release.Namespace }}
-data:
-  config.yaml: |
-    port: 7880
-    rtc:
-      tcp_port: 7881
-      use_external_ip: false
-      stun_servers: []
-      {{- if $srv.nodeIp }}
-      node_ip: {{ $srv.nodeIp | quote }}
-      {{- end }}
-    keys:
-      {{ $cfg.apiKey }}: {{ $cfg.apiSecret }}
-    logging:
-      level: info
-      pion_level: error
+# ── Config ────────────────────────────────────────────────────────────────
+# The LiveKit server config contains the API key/secret map, so it is rendered
+# as a Secret in secrets.yaml rather than a ConfigMap here.
 
 ---
 # ── Deployment ────────────────────────────────────────────────────────────
@@ -92,8 +74,14 @@ spec:
               mountPath: /etc/livekit
       volumes:
         - name: config
-          configMap:
-            name: assistantx-livekit-config
+          secret:
+            secretName: {{ .Values.assistantx.existingSecretName | default "assistantx-livekit-config" }}
+            {{- if .Values.assistantx.existingSecretName }}
+            items:
+              - key: livekit-config.yaml
+                path: config.yaml
+            {{- end }}
+            defaultMode: 0440
 
 ---
 # ── Service ───────────────────────────────────────────────────────────────

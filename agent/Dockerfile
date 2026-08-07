@@ -31,17 +31,27 @@ COPY configs/ ./configs/
 RUN pip install --no-cache-dir .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# Stays on python:3.13-slim (Debian). python:3.13-alpine scans completely clean,
+# but livekit-agents depends on livekit-blingfire, which publishes no musl wheel
+# and has no source fallback, so an Alpine runtime cannot install the agent.
+# The ~30 CRITICAL/HIGH OS-package findings that remain here (perl-base, glib,
+# util-linux, ncurses) currently have NO fixed version published by Debian —
+# `apt-get upgrade` below already pulls everything that is actually available.
+# Re-check on base-image bumps; nothing in the app calls into these packages.
 FROM python:3.13-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Runtime needs only the GLib stack the LiveKit/audio plugins link against and
+# procps for the healthcheck's pgrep. The interactive debug tools that used to be
+# here (vim-tiny, curl, iputils-ping, net-tools, iproute2) accounted for the large
+# majority of this image's CVEs — 34 from vim alone — and nothing at runtime calls
+# them. `kubectl debug` attaches an ephemeral container when they are needed.
+# apt-get upgrade picks up base-image security fixes published since the tag build.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     libglib2.0-0 libgobject-2.0-0 libgirepository-1.0-1 \
     procps \
-    curl \
-    iputils-ping \
-    net-tools \
-    iproute2 \
-    vim-tiny \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv

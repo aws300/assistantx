@@ -1,24 +1,5 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: assistantx-backend-config
-data:
-  config.yaml: |
-    dependencies:
-      auth: {{ .Values.assistantx.config.auth | quote }}
-    {{- if .Values.assistantx.config.livekit }}
-    livekit:
-      url: {{ printf "wss://%s:7883" .Values.assistantx.host.backend | quote }}
-      apiKey: {{ .Values.assistantx.config.livekit.apiKey | default "" | quote }}
-      apiSecret: {{ .Values.assistantx.config.livekit.apiSecret | default "" | quote }}
-      agentName: {{ .Values.assistantx.config.livekit.agentName | default "Assistant" | quote }}
-      skillsDir: "/app/skills/devices"
-    {{- end }}
-    apis:
-      httpAddr: ":8080"
-      grpcAddr: ":8081"
-      metricsAddr: ":9090"
----
+# The backend config embeds the OIDC client secret and the LiveKit API secret,
+# so it is rendered as a Secret in secrets.yaml rather than a ConfigMap here.
 apiVersion: v1
 kind: Service
 metadata:
@@ -48,6 +29,11 @@ spec:
       {{- if .Values.assistantx.irsaRoleArn }}
       serviceAccountName: assistantx-backend
       {{- end }}
+      # The image runs as uid 1000 (non-root), so the mounted config Secret is
+      # group-owned by fsGroup and mounted 0440 — readable by the app, and by
+      # nothing else in the pod.
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: assistantx-backend
           image: {{ .Values.assistantx.image.backend }}
@@ -81,5 +67,11 @@ spec:
               subPath: config.yaml
       volumes:
         - name: config
-          configMap:
-            name: assistantx-backend-config
+          secret:
+            secretName: {{ .Values.assistantx.existingSecretName | default "assistantx-backend-config" }}
+            {{- if .Values.assistantx.existingSecretName }}
+            items:
+              - key: backend-config.yaml
+                path: config.yaml
+            {{- end }}
+            defaultMode: 0440
