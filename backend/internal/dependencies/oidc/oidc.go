@@ -23,10 +23,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,17 +62,50 @@ type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
+const (
+	// maxDocumentBytes caps the discovery and JWKS responses read into memory.
+	maxDocumentBytes = 1 << 20
+	// jwksRefreshInterval is the minimum gap between JWKS refreshes triggered by
+	// an unknown kid, so forged tokens cannot turn every request into a fetch.
+	jwksRefreshInterval = time.Minute
+	// clockSkew tolerates small clock differences between us and the issuer.
+	clockSkew = time.Minute
+)
+
+// Audience holds the JWT "aud" claim, which may be a string or an array.
+type Audience []string
+
+// UnmarshalJSON accepts both the string and the array form of "aud".
+func (a *Audience) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*a = Audience{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*a = many
+	return nil
+}
+
 // Claims represents the JWT claims extracted from an access or ID token.
 type Claims struct {
-	Iss       string `json:"iss"`
-	Sub       string `json:"sub"`
-	Aud       string `json:"aud"`
-	Exp       int64  `json:"exp"`
-	Iat       int64  `json:"iat"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	Picture   string `json:"picture"`
+	Iss       string   `json:"iss"`
+	Sub       string   `json:"sub"`
+	Aud       Audience `json:"aud"`
+	Exp       int64    `json:"exp"`
+	Nbf       int64    `json:"nbf"`
+	Iat       int64    `json:"iat"`
+	ProjectID string   `json:"project_id"`
+	Name      string   `json:"name"`
+	Email     string   `json:"email"`
+	Picture   string   `json:"picture"`
+	// ClientID and TokenUse are set by Cognito access tokens, which carry the
+	// app client in client_id instead of aud.
+	ClientID string `json:"client_id"`
+	TokenUse string `json:"token_use"`
 }
 
 // Provider manages OIDC discovery, JWKS key fetching, and JWT validation.
@@ -79,6 +115,7 @@ type Provider struct {
 	keys         map[string]*rsa.PublicKey
 	mu           sync.RWMutex
 	sfg          singleflight.Group // deduplicates concurrent JWKS refresh calls
+	lastRefresh  time.Time          // last JWKS fetch, guarded by mu
 	client       *http.Client
 	ClientID     string
 	ClientSecret string
@@ -142,9 +179,15 @@ func (p *Provider) fetchDiscovery(ctx context.Context, issuer string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("discovery: unexpected status %d", resp.StatusCode)
+	}
 	var d Discovery
-	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDocumentBytes)).Decode(&d); err != nil {
 		return err
+	}
+	if d.Issuer == "" || d.JwksURI == "" {
+		return errors.New("discovery: missing issuer or jwks_uri")
 	}
 	p.mu.Lock()
 	p.discovery = &d
@@ -166,8 +209,11 @@ func (p *Provider) fetchJWKS(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("jwks: unexpected status %d", resp.StatusCode)
+	}
 	var jwks JWKS
-	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDocumentBytes)).Decode(&jwks); err != nil {
 		return err
 	}
 
@@ -185,8 +231,27 @@ func (p *Provider) fetchJWKS(ctx context.Context) error {
 
 	p.mu.Lock()
 	p.keys = keys
+	p.lastRefresh = time.Now()
 	p.mu.Unlock()
 	return nil
+}
+
+// refreshJWKS re-fetches the key set for an unknown kid (key rotation), at
+// most once per jwksRefreshInterval.
+func (p *Provider) refreshJWKS() {
+	p.mu.RLock()
+	recent := time.Since(p.lastRefresh) < jwksRefreshInterval
+	p.mu.RUnlock()
+	if recent {
+		return
+	}
+	// singleflight ensures that concurrent requests with an unknown kid
+	// share a single HTTP round-trip instead of each issuing their own.
+	p.sfg.Do("jwks", func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return nil, p.fetchJWKS(ctx)
+	})
 }
 
 func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
@@ -232,12 +297,7 @@ func (p *Provider) ValidateToken(tokenStr string) (*Claims, error) {
 	key, ok := p.keys[header.Kid]
 	p.mu.RUnlock()
 	if !ok {
-		// Try refreshing JWKS once (key rotation).
-		// singleflight ensures that concurrent requests with an unknown kid
-		// share a single HTTP round-trip instead of each issuing their own.
-		p.sfg.Do("jwks", func() (any, error) {
-			return nil, p.fetchJWKS(context.Background())
-		})
+		p.refreshJWKS()
 		p.mu.RLock()
 		key, ok = p.keys[header.Kid]
 		p.mu.RUnlock()
@@ -266,9 +326,44 @@ func (p *Provider) ValidateToken(tokenStr string) (*Claims, error) {
 		return nil, err
 	}
 
-	if time.Now().Unix() > claims.Exp {
-		return nil, fmt.Errorf("token expired")
+	if err := p.verifyClaims(&claims, time.Now()); err != nil {
+		return nil, err
+	}
+	return &claims, nil
+}
+
+// verifyClaims checks that a signature-verified token was issued by our
+// issuer, for our client, and is within its validity window. Signature checks
+// alone would accept any token from the same issuer, including ones minted
+// for other app clients.
+func (p *Provider) verifyClaims(c *Claims, now time.Time) error {
+	if c.Iss != p.GetDiscovery().Issuer {
+		return errors.New("unexpected issuer")
+	}
+	if c.Sub == "" {
+		return errors.New("missing subject")
 	}
 
-	return &claims, nil
+	switch c.TokenUse {
+	case "", "id":
+		// OIDC ID tokens name the client in aud.
+		if !slices.Contains(c.Aud, p.ClientID) {
+			return errors.New("token not issued for this client")
+		}
+	case "access":
+		// Cognito access tokens name the client in client_id.
+		if c.ClientID != p.ClientID {
+			return errors.New("token not issued for this client")
+		}
+	default:
+		return fmt.Errorf("unsupported token_use: %s", c.TokenUse)
+	}
+
+	if c.Exp == 0 || now.After(time.Unix(c.Exp, 0).Add(clockSkew)) {
+		return errors.New("token expired")
+	}
+	if c.Nbf != 0 && now.Add(clockSkew).Before(time.Unix(c.Nbf, 0)) {
+		return errors.New("token not yet valid")
+	}
+	return nil
 }

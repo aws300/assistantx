@@ -72,7 +72,7 @@ const TempItem: Component<TempItemProps> = (props) => {
           0{unit()}
         </span>
         <span>
-          安全阈值 {props.maxSafe}
+          Safe limit {props.maxSafe}
           {unit()}
         </span>
       </div>
@@ -84,9 +84,9 @@ export const EnvironmentCard: Component = () => {
   const cooling = () => {
     const t = chargerStore.state.temperature;
     const maxTemp = Math.max(t.connector / 85, t.module / 70, t.ambient / 45);
-    if (maxTemp < 0.6) return { label: '正常', color: 'text-green-600' };
-    if (maxTemp < 0.8) return { label: '偏高', color: 'text-yellow-600' };
-    return { label: '过高', color: 'text-red-600' };
+    if (maxTemp < 0.6) return { label: 'Normal', color: 'text-green-600' };
+    if (maxTemp < 0.8) return { label: 'Elevated', color: 'text-yellow-600' };
+    return { label: 'Too High', color: 'text-red-600' };
   };
 
   return (
@@ -94,27 +94,27 @@ export const EnvironmentCard: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="thermostat" size="sm" class="text-red-600" />
-        <span class="text-sm font-semibold text-gray-700">温度监测</span>
+        <span class="text-sm font-semibold text-gray-700">Temperature Monitor</span>
       </div>
 
       <div class="space-y-4">
         <TempItem
           icon="thermostat"
-          label="枪头温度"
+          label="Connector"
           value={chargerStore.state.temperature.connector}
           maxSafe={85}
         />
 
         <TempItem
           icon="memory"
-          label="模块温度"
+          label="Module"
           value={chargerStore.state.temperature.module}
           maxSafe={70}
         />
 
         <TempItem
           icon="wb_sunny"
-          label="环境温度"
+          label="Ambient"
           value={chargerStore.state.temperature.ambient}
           maxSafe={45}
         />
@@ -123,7 +123,7 @@ export const EnvironmentCard: Component = () => {
       {/* Temperature Summary */}
       <div class="mt-4 p-3 rounded-lg bg-blue-50">
         <div class="flex items-center justify-between text-sm">
-          <span class="text-gray-600">系统散热状态</span>
+          <span class="text-gray-600">Cooling System</span>
           <span class={cn('font-medium', cooling().color)}>{cooling().label}</span>
         </div>
       </div>

@@ -21,9 +21,9 @@ const quickPositions = [0, 25, 50, 75, 100];
 export const HomeCurtainControl: Component = () => {
   const positionLabel = () => {
     const pos = homeStore.state.curtainPosition;
-    if (pos === 0) return '已关闭';
-    if (pos === 100) return '已全开';
-    return '部分打开';
+    if (pos === 0) return 'Closed';
+    if (pos === 100) return 'Fully Open';
+    return 'Partly Open';
   };
 
   return (
@@ -32,7 +32,7 @@ export const HomeCurtainControl: Component = () => {
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <Icon name="blinds" size="sm" class="text-orange-600" />
-          <span class="text-sm font-semibold text-gray-700">窗帘控制</span>
+          <span class="text-sm font-semibold text-gray-700">Curtains</span>
         </div>
         <div class="flex gap-2">
           <button
@@ -44,7 +44,7 @@ export const HomeCurtainControl: Component = () => {
             )}
             onClick={() => homeStore.setCurtainPosition(100)}
           >
-            全开
+            All On
           </button>
           <button
             class={cn(
@@ -55,7 +55,7 @@ export const HomeCurtainControl: Component = () => {
             )}
             onClick={() => homeStore.setCurtainPosition(0)}
           >
-            全关
+            All Off
           </button>
         </div>
       </div>
@@ -120,7 +120,7 @@ export const HomeCurtainControl: Component = () => {
       <div class="mb-4">
         <div class="flex items-center gap-2 mb-1">
           <Icon name="tune" size="xs" class="text-gray-500" />
-          <span class="text-xs text-gray-500">开合度</span>
+          <span class="text-xs text-gray-500">Openness</span>
         </div>
         <input
           type="range"

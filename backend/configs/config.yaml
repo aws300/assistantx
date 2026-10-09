@@ -11,3 +11,9 @@ livekit:
   apiSecret: "CHANGE_ME"
   agentName: "AssistantX"
   skillsDir: "/app/skills/devices"
+
+# Browser origins allowed to call the API cross-origin. Leaving the list empty
+# disables CORS, so only same-origin requests work.
+cors:
+  allowedOrigins:
+    - "http://localhost:5173"

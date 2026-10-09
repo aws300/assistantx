@@ -32,6 +32,28 @@ type Config struct {
 	Dependencies dependencies.Dependencies
 	Apis         grpcmux.Config
 	Livekit      *server.LivekitConfig `yaml:"livekit"`
+	CORS         CORSConfig            `yaml:"cors"`
+}
+
+// CORSConfig lists the browser origins allowed to call the API cross-origin.
+type CORSConfig struct {
+	AllowedOrigins []string `yaml:"allowedOrigins"`
+}
+
+// corsOption builds the CORS policy. grpcmux treats an empty origin list as
+// allow-all, so an unconfigured list disables CORS instead: same-origin
+// requests keep working and cross-origin ones are refused.
+func corsOption(c CORSConfig) grpcmux.CORSConfig {
+	var origins []string
+	for _, o := range c.AllowedOrigins {
+		if o != "" && o != "*" {
+			origins = append(origins, o)
+		}
+	}
+	if len(origins) == 0 {
+		return grpcmux.CORSConfig{Disabled: true}
+	}
+	return grpcmux.CORSConfig{AllowedOrigins: origins}
 }
 
 func main() {
@@ -40,19 +62,17 @@ func main() {
 	//    and automatically calls dependencies.Init on the Dependencies field.
 	var cfg Config
 	if err := config.Init(context.Background(), "", &cfg); err != nil {
-		log.Action("InitConfig").Fatal(err.Error())
+		log.Action("InitConfig").Fatal("%v", err)
 	}
 
 	// 2. Create the grpcmux server with:
-	//    - WithCORS: explicit CORS configuration (allow all origins)
+	//    - WithCORS: only the origins listed under cors.allowedOrigins
 	//    - WithAuthFunc: centralized JWT token validation via OIDC provider
 	//    - WithNoAuthPrefixes: paths that bypass authentication
 	//      (OIDC handshake endpoints, health check, and skills endpoint)
 	gs := grpcmux.NewServer(
 		grpcmux.WithConfig(&cfg.Apis),
-		grpcmux.WithCORS(grpcmux.CORSConfig{
-			AllowedOrigins: []string{"*"},
-		}),
+		grpcmux.WithCORS(corsOption(cfg.CORS)),
 		grpcmux.WithAuthFunc(server.NewAuthFunc(cfg.Dependencies.Auth)),
 		grpcmux.WithNoAuthPrefixes(
 			"/healthz",

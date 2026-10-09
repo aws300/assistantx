@@ -16,10 +16,10 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/metadata"
+	"github.com/ti/common-go/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -55,7 +55,10 @@ func NewAuthFunc(provider *oidc.Provider) func(ctx context.Context) (context.Con
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
 		if _, err := provider.ValidateToken(token); err != nil {
-			return ctx, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
+			// Keep the reason in the server log only: telling the caller which
+			// check failed helps someone probing with forged tokens.
+			log.Action("ValidateToken").Info("rejected token: %v", err)
+			return ctx, status.Error(codes.Unauthenticated, "invalid token")
 		}
 
 		return ctx, nil

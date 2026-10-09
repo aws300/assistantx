@@ -168,9 +168,9 @@ LiveKit dispatch (scene metadata)
 # skills/devices/vehicle.yaml
 skills:
   - id: hvac.setTemperature
-    name: "设置空调温度"
+    name: "Set A/C Temperature"
     description: "..."
-    triggers: ["调高温度", "空调设为25度"]
+    triggers: ["make it warmer", "set the A/C to 25 degrees"]
     parameters:
       - name: temperature
         type: integer
@@ -180,19 +180,19 @@ skills:
       id: hvac.setTemperature
       payload_template: { temperature: "${temperature}" }
     responses:
-      success: "已将空调温度设置为${temperature}度"
+      success: "The A/C is set to ${temperature} degrees"
 
   - id: session.exit
     category: session
-    name: "退出会话"
-    description: "结束当前语音会话"
-    triggers: ["再见", "退出", "关闭", "退下"]
+    name: "Exit Session"
+    description: "End the current voice session"
+    triggers: ["goodbye", "exit", "close", "dismiss"]
     parameters: []
     action:
       id: session.disconnect
       payload_template: {}
     responses:
-      success: "好的，再见"
+      success: "OK, goodbye"
 ```
 
 ---

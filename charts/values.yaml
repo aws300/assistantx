@@ -22,6 +22,9 @@ assistantx:
     # backend: when set, backend RPCs are served on this hostname (separate domain).
     # Leave empty to share host.frontend via path-based routing.
     backend: "assistantxapi.nx.run"
+  # corsAllowedOrigins: extra browser origins allowed to call the backend
+  # cross-origin. https://<host.frontend> is always allowed; "*" is ignored.
+  corsAllowedOrigins: []
   config:
     # OIDC DSN — REQUIRED, and intentionally empty: it embeds a client secret, so it
     # must never be committed. Supply it at install time:
@@ -63,13 +66,14 @@ assistantx:
         apiKey: ""
       tts:
         model: "cosyvoice-v3"
+        # CosyVoice built-in speaker id (an external identifier); only used in "traditional" voice mode
         voice: "中文女"
         baseUrl: "http://devgpu.nx.run:9880/v1"
         apiKey: "not-needed"
       knowledgeBase:
         id: "FHRCYNULOS"
         region: "us-west-2"
-        description: "充电桩相关问题，包括充电桩使用方法、操作指南、充电费用、计费方式、故障排除、常见问题、充电安全注意事项、充电桩技术规格等"
+        description: "EV charger questions, including how to use the charger, operating guides, charging fees, billing, troubleshooting, FAQs, charging safety precautions and charger technical specifications"
   # irsaRoleArn: when set, creates a ServiceAccount annotated with eks.amazonaws.com/role-arn
   # and binds it to the backend Deployment for IRSA credential injection.
   # PodRole from CloudFormation stack "nx" — carries the Bedrock (Nova Sonic,

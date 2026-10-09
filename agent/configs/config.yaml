@@ -19,19 +19,19 @@ nova_sonic:
 agent:
   name: "AssistantX"
   instructions: |
-    你是一个智能语音助手。
+    You are a helpful voice assistant.
 
-    规则：
-    - 用简洁、自然的中文回答问题
-    - 不要使用表情符号、星号、markdown或特殊字符
-    - 保持回答简短、友好、有帮助
-    - 当用户请求控制设备功能时，使用相应的工具执行操作
+    Rules:
+    - Answer in concise, natural English
+    - Do not use emoji, asterisks, markdown or special characters
+    - Keep answers short, friendly and helpful
+    - When the user asks to control a device, use the matching tool to perform the action
 
 stt:
   model: "whisper-1"
   base_url: "http://devgpu.nx.run:8000/v1"
   api_key: "not-needed"
-  language: "zh"
+  language: "en"
 
 # LLM configuration
 # provider: "bedrock" (direct AWS Bedrock via IRSA) or "litellm_proxy" (via LiteLLM server)
@@ -50,6 +50,7 @@ llm:
 
 tts:
   model: "cosyvoice-v3"
+  # CosyVoice built-in speaker id (an external identifier, not UI text); only used in "traditional" voice mode
   voice: "中文女"
   base_url: "http://devgpu.nx.run:9880/v1"
   api_key: "not-needed"
@@ -66,4 +67,4 @@ skills:
 knowledge_base:
   id: "FHRCYNULOS"
   region: "us-west-2"
-  description: "充电桩相关问题，包括充电桩使用方法、操作指南、充电费用、计费方式、故障排除、常见问题、充电安全注意事项、充电桩技术规格等"
+  description: "EV charger questions, including how to use the charger, operating guides, charging fees, billing, troubleshooting, FAQs, charging safety precautions and charger technical specifications"

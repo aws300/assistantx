@@ -36,14 +36,14 @@ import ProfileBadge from '@/components/ProfileBadge';
 // ---------------------------------------------------------------------------
 
 const AMBIENT_COLORS = [
-  { color: '#3B82F6', name: '蓝' },
-  { color: '#EF4444', name: '红' },
-  { color: '#22C55E', name: '绿' },
-  { color: '#F97316', name: '橙' },
-  { color: '#A855F7', name: '紫' },
-  { color: '#EC4899', name: '粉' },
-  { color: '#06B6D4', name: '青' },
-  { color: '#6B7280', name: '白' },
+  { color: '#3B82F6', name: 'Blue' },
+  { color: '#EF4444', name: 'Red' },
+  { color: '#22C55E', name: 'Green' },
+  { color: '#F97316', name: 'Orange' },
+  { color: '#A855F7', name: 'Purple' },
+  { color: '#EC4899', name: 'Pink' },
+  { color: '#06B6D4', name: 'Cyan' },
+  { color: '#6B7280', name: 'White' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ const VehicleStatusCard: Component = () => {
 
   return (
     <LiquidGlassCard>
-      <LiquidGlassHeader title="车辆状态" icon="directions_car" />
+      <LiquidGlassHeader title="Vehicle Status" icon="directions_car" />
 
       <div class="grid grid-cols-2 gap-4">
         <div class="flex items-center gap-3">
@@ -173,21 +173,21 @@ const VehicleStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{info().battery}%</div>
-            <div class="text-xs text-gray-500">电量</div>
+            <div class="text-xs text-gray-500">Battery</div>
           </div>
         </div>
 
         <div class="col-span-2 space-y-2">
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500">续航里程</span>
+            <span class="text-gray-500">Range</span>
             <span class="text-gray-800 font-medium">{info().range} km</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500">车外温度</span>
+            <span class="text-gray-500">Outside Temp</span>
             <span class="text-gray-800 font-medium">{info().outsideTemp}&deg;C</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500">总里程</span>
+            <span class="text-gray-500">Odometer</span>
             <span class="text-gray-800 font-medium">{info().odometer.toLocaleString()} km</span>
           </div>
         </div>
@@ -265,11 +265,11 @@ const WindowControlCard: Component = () => {
   return (
     <LiquidGlassCard>
       <LiquidGlassHeader
-        title="车窗控制"
+        title="Window Control"
         icon="sensor_window"
         action={
           <GlassButton size="sm" onClick={closeAll}>
-            全关
+            All Off
           </GlassButton>
         }
       />
@@ -279,13 +279,13 @@ const WindowControlCard: Component = () => {
         {/* Left side */}
         <div class="flex flex-col gap-4">
           <WindowButton
-            label="左前"
+            label="Front Left"
             position={win('frontLeft')}
             onOpen={() => control('frontLeft', 'open')}
             onClose={() => control('frontLeft', 'close')}
           />
           <WindowButton
-            label="左后"
+            label="Rear Left"
             position={win('rearLeft')}
             onOpen={() => control('rearLeft', 'open')}
             onClose={() => control('rearLeft', 'close')}
@@ -305,7 +305,7 @@ const WindowControlCard: Component = () => {
               style={{ height: `${100 - win('sunroof')}%` }}
             />
           </div>
-          <span class="text-xs text-gray-500 mt-2">天窗</span>
+          <span class="text-xs text-gray-500 mt-2">Sunroof</span>
           <div class="flex gap-1 mt-2">
             <button
               onClick={() => control('sunroof', 'open')}
@@ -325,13 +325,13 @@ const WindowControlCard: Component = () => {
         {/* Right side */}
         <div class="flex flex-col gap-4">
           <WindowButton
-            label="右前"
+            label="Front Right"
             position={win('frontRight')}
             onOpen={() => control('frontRight', 'open')}
             onClose={() => control('frontRight', 'close')}
           />
           <WindowButton
-            label="右后"
+            label="Rear Right"
             position={win('rearRight')}
             onOpen={() => control('rearRight', 'open')}
             onClose={() => control('rearRight', 'close')}
@@ -351,13 +351,13 @@ const LightingControlCard: Component = () => {
 
   return (
     <LiquidGlassCard>
-      <LiquidGlassHeader title="灯光控制" icon="light" />
+      <LiquidGlassHeader title="Lighting" icon="light" />
 
       {/* Interior Light */}
       <div class="mb-6">
         <div class="flex items-center gap-2 mb-3">
           <Icon name="wb_sunny" size="xs" class="text-gray-500" />
-          <span class="text-sm text-gray-600">车内灯</span>
+          <span class="text-sm text-gray-600">Interior Light</span>
         </div>
         <GlassSlider
           value={lighting().interior.brightness}
@@ -383,7 +383,7 @@ const LightingControlCard: Component = () => {
                 'box-shadow': `0 0 10px ${lighting().ambient.color}`,
               }}
             />
-            <span class="text-sm text-gray-600">氛围灯</span>
+            <span class="text-sm text-gray-600">Ambient Light</span>
           </div>
           <span class="text-xs text-gray-500">{lighting().ambient.brightness}%</span>
         </div>
@@ -417,7 +417,7 @@ const LightingControlCard: Component = () => {
           onChange={(v) => vehicleStore.setAmbientBrightness(v)}
           min={0}
           max={100}
-          label="亮度"
+          label="Brightness"
           unit="%"
         />
       </div>
@@ -458,7 +458,7 @@ const HVACControlCard: Component = () => {
   return (
     <LiquidGlassCard>
       <LiquidGlassHeader
-        title="空调控制"
+        title="Climate Control"
         icon="thermostat"
         action={
           <GlassButton
@@ -491,7 +491,7 @@ const HVACControlCard: Component = () => {
         min={16}
         max={30}
         step={0.5}
-        label="温度"
+        label="Temperature"
         unit="°C"
       />
 
@@ -499,7 +499,7 @@ const HVACControlCard: Component = () => {
       <div class="mt-4">
         <div class="flex items-center gap-2 mb-2">
           <Icon name="air" size="xs" class="text-gray-500" />
-          <span class="text-sm text-gray-500">风速</span>
+          <span class="text-sm text-gray-500">Fan Speed</span>
         </div>
         <div class="flex gap-2">
           <GlassButton
@@ -508,7 +508,7 @@ const HVACControlCard: Component = () => {
             onClick={() => setFanLevel('auto')}
             class="flex-1"
           >
-            自动
+            Auto
           </GlassButton>
           <For each={[1, 2, 3, 4, 5]}>
             {(level) => (
@@ -546,7 +546,7 @@ const SeatControlPanel: Component<{
     <div class="mb-3">
       <div class="flex items-center gap-1 mb-2">
         <Icon name="local_fire_department" size="xs" class="text-primary" />
-        <span class="text-xs text-gray-500">加热</span>
+        <span class="text-xs text-gray-500">Heating</span>
       </div>
       <div class="flex gap-1">
         <For each={[0, 1, 2, 3]}>
@@ -571,7 +571,7 @@ const SeatControlPanel: Component<{
     <div>
       <div class="flex items-center gap-1 mb-2">
         <Icon name="air" size="xs" class="text-primary" />
-        <span class="text-xs text-gray-500">通风</span>
+        <span class="text-xs text-gray-500">Ventilation</span>
       </div>
       <div class="flex gap-1">
         <For each={[0, 1, 2, 3]}>
@@ -603,11 +603,11 @@ const SeatControlCard: Component = () => {
 
   return (
     <LiquidGlassCard>
-      <LiquidGlassHeader title="座椅控制" icon="event_seat" />
+      <LiquidGlassHeader title="Seat Control" icon="event_seat" />
 
       <div class="flex gap-6">
         <SeatControlPanel
-          label="驾驶座"
+          label="Driver"
           heating={seats()[driverIdx()]?.heating ?? 0}
           cooling={seats()[driverIdx()]?.cooling ?? 0}
           onHeatingChange={(level) => vehicleStore.setSeatHeating(driverIdx(), level)}
@@ -617,7 +617,7 @@ const SeatControlCard: Component = () => {
         <div class="w-px bg-gray-200" />
 
         <SeatControlPanel
-          label="副驾驶"
+          label="Passenger"
           heating={seats()[passengerIdx()]?.heating ?? 0}
           cooling={seats()[passengerIdx()]?.cooling ?? 0}
           onHeatingChange={(level) => vehicleStore.setSeatHeating(passengerIdx(), level)}
@@ -656,7 +656,7 @@ const Cockpit: Component = () => {
       <div class="p-4 md:p-6 lg:p-8">
         {/* Header */}
         <header class="mb-6">
-          <h1 class="text-2xl font-bold tracking-wider text-gray-800">智能座舱</h1>
+          <h1 class="text-2xl font-bold tracking-wider text-gray-800">Smart Cockpit</h1>
           <p class="text-sm text-gray-500 mt-1">Vehicle Voice Control System</p>
         </header>
 

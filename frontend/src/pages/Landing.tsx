@@ -32,25 +32,25 @@ interface SceneConfig {
 
 const scenes: SceneConfig[] = [
   {
-    title: '智能座舱',
+    title: 'Smart Cockpit',
     description:
-      '车载语音交互系统，支持空调、车窗、座椅、灯光等 20+ 功能的自然语言控制，让驾驶更安全便捷',
+      'An in-car voice interaction system with natural-language control of 20+ features such as A/C, windows, seats and lighting, for safer and easier driving',
     path: '/car',
     gradient: 'linear-gradient(180deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
     updateTime: '2026-01-15',
   },
   {
-    title: '智能家居',
+    title: 'Smart Home',
     description:
-      '全屋智能语音控制平台，轻松管理空调、灯光、窗帘等设备，打造舒适便捷的智能生活体验',
+      'A whole-home voice control platform that makes it easy to manage the A/C, lights, curtains and more, for a comfortable and convenient smart living experience',
     path: '/home',
     gradient: 'linear-gradient(180deg, #4facfe 0%, #00f2fe 100%)',
     updateTime: '2026-02-08',
   },
   {
-    title: '智能 IoT (充电桩)',
+    title: 'Smart IoT (EV Charger)',
     description:
-      '智能充电桩管理系统，实时监控充电状态、远程控制充电参数、查询历史数据，让充电管理更高效',
+      'A smart EV charger management system with realtime charging status, remote control of charging parameters and history lookup, for more efficient charging management',
     path: '/charger',
     gradient: 'linear-gradient(180deg, #fa709a 0%, #fee140 100%)',
     updateTime: '2026-01-28',
@@ -65,10 +65,10 @@ interface FeatureConfig {
 }
 
 const features: FeatureConfig[] = [
-  { icon: 'mic', title: '实时语音交互', description: '唤醒词激活，低延迟对话', color: 'text-blue-400' },
-  { icon: 'language', title: '多场景支持', description: '车载、家居、IoT 全覆盖', color: 'text-green-400' },
-  { icon: 'settings_suggest', title: '动态技能加载', description: 'YAML 配置，灵活扩展', color: 'text-purple-400' },
-  { icon: 'cloud', title: '云原生架构', description: 'Kubernetes + AWS', color: 'text-orange-400' },
+  { icon: 'mic', title: 'Realtime Voice', description: 'Wake-word activation, low-latency conversation', color: 'text-blue-400' },
+  { icon: 'language', title: 'Multi-Scene', description: 'Covers car, home and IoT', color: 'text-green-400' },
+  { icon: 'settings_suggest', title: 'Dynamic Skills', description: 'YAML-configured and easy to extend', color: 'text-purple-400' },
+  { icon: 'cloud', title: 'Cloud Native', description: 'Kubernetes + AWS', color: 'text-orange-400' },
 ];
 
 const Landing: Component = () => {
@@ -180,7 +180,7 @@ const Landing: Component = () => {
         {/* Header */}
         <header class="mb-16">
           <h1 class="text-4xl md:text-5xl font-bold text-white mb-2">
-            Assistant X 演示场景列表
+            Assistant X Demo Scenes
           </h1>
         </header>
 
@@ -210,7 +210,7 @@ const Landing: Component = () => {
 
                   {/* Update time */}
                   <div class="text-sm text-gray-500 mt-auto">
-                    更新于 {scene.updateTime}
+                    Updated {scene.updateTime}
                   </div>
                 </div>
               </A>
@@ -220,7 +220,7 @@ const Landing: Component = () => {
 
         {/* Features Section */}
         <div class="border-t border-gray-800 pt-12">
-          <h2 class="text-2xl font-bold text-white mb-8 text-center">核心特性</h2>
+          <h2 class="text-2xl font-bold text-white mb-8 text-center">Key Features</h2>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
             <For each={features}>

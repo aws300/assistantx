@@ -1,9 +1,9 @@
 metadata:
   device_type: ev_charger
-  device_name: "智能充电桩"
+  device_name: "Smart EV Charger"
   version: "1.0.0"
-  language: zh-CN
-  description: "电动汽车充电桩语音控制系统技能配置"
+  language: en-US
+  description: "Skill configuration for the EV charger voice control system"
 
 settings:
   session_timeout_minutes: 5
@@ -11,92 +11,92 @@ settings:
 
 categories:
   - id: charging
-    name: "充电控制"
+    name: "Charging Control"
     icon: "zap"
-    description: "开始、停止、暂停充电操作"
+    description: "Start, stop and pause charging"
   - id: settings
-    name: "充电设置"
+    name: "Charging Settings"
     icon: "settings"
-    description: "目标电量等设置"
+    description: "Settings such as the target charge level"
   - id: info
-    name: "信息查询"
+    name: "Charger Info"
     icon: "info"
-    description: "充电状态、电气数据、温度查询"
+    description: "Charging status, electrical data and temperature queries"
   - id: session
-    name: "会话控制"
+    name: "Session Control"
     icon: "power"
-    description: "语音会话管理，包括退出、关闭等"
+    description: "Voice session management, such as exiting or closing"
 
 skills:
   - id: charger.start
     category: charging
-    name: "开始充电"
-    description: "启动充电桩开始充电"
+    name: "Start Charging"
+    description: "Start the charger"
     triggers:
-      - "开始充电"
-      - "启动充电"
-      - "充电"
-      - "开充"
+      - "start charging"
+      - "begin charging"
+      - "charge"
+      - "charge now"
     parameters: []
     action:
       id: "charger.start"
       payload_template: {}
     responses:
-      success: "好的，充电已启动"
+      success: "OK, charging has started"
 
   - id: charger.stop
     category: charging
-    name: "停止充电"
-    description: "停止当前充电"
+    name: "Stop Charging"
+    description: "Stop the current charging session"
     triggers:
-      - "停止充电"
-      - "结束充电"
-      - "停充"
-      - "充电完成"
+      - "stop charging"
+      - "end charging"
+      - "stop the charge"
+      - "charging done"
     parameters: []
     action:
       id: "charger.stop"
       payload_template: {}
     responses:
-      success: "好的，充电已停止"
+      success: "OK, charging has stopped"
 
   - id: charger.pause
     category: charging
-    name: "暂停充电"
-    description: "暂停当前充电"
+    name: "Pause Charging"
+    description: "Pause the current charging session"
     triggers:
-      - "暂停充电"
-      - "暂停"
+      - "pause charging"
+      - "pause"
     parameters: []
     action:
       id: "charger.pause"
       payload_template: {}
     responses:
-      success: "好的，充电已暂停"
+      success: "OK, charging is paused"
 
   - id: charger.resume
     category: charging
-    name: "继续充电"
-    description: "恢复暂停的充电"
+    name: "Resume Charging"
+    description: "Resume a paused charging session"
     triggers:
-      - "继续充电"
-      - "恢复充电"
+      - "resume charging"
+      - "continue charging"
     parameters: []
     action:
       id: "charger.resume"
       payload_template: {}
     responses:
-      success: "好的，充电已恢复"
+      success: "OK, charging has resumed"
 
   - id: charger.set_target_soc
     category: settings
-    name: "设置目标电量"
-    description: "设置充电目标电量百分比"
+    name: "Set Target Charge"
+    description: "Set the target charge level as a percentage"
     triggers:
-      - "充到{percent}%"
-      - "充电到{percent}"
-      - "目标电量{percent}"
-      - "充到{percent}就停"
+      - "charge to {percent}%"
+      - "charge up to {percent}"
+      - "target charge {percent}"
+      - "stop at {percent}"
     parameters:
       - name: percent
         type: number
@@ -109,91 +109,91 @@ skills:
       payload_template:
         percent: "${percent}"
     responses:
-      success: "好的，已设置目标电量为${percent}%，预计还需${estimatedTime}分钟"
+      success: "OK, the target charge is set to ${percent}%, about ${estimatedTime} minutes to go"
 
   - id: charger.get_status
     category: info
-    name: "查询充电状态"
-    description: "查询当前充电状态和电量信息"
+    name: "Check Charging Status"
+    description: "Get the current charging status and battery level"
     triggers:
-      - "充电状态"
-      - "充了多少"
-      - "还要多久"
-      - "充到多少了"
-      - "电量多少"
-      - "充电情况"
+      - "charging status"
+      - "how much has it charged"
+      - "how long until it's done"
+      - "what's the charge level"
+      - "battery level"
+      - "how is charging going"
     parameters: []
     action:
       id: "charger.getStatus"
       payload_template: {}
     responses:
-      success: "当前${status}，电量${soc}%，目标${targetSoc}%，功率${power}kW，预计还需${estimatedTime}分钟，已花费${currentCost}元"
+      success: "Status: ${status}, battery at ${soc}%, target ${targetSoc}%, power ${power} kW, about ${estimatedTime} minutes remaining, ${currentCost} yuan spent so far"
 
   - id: charger.get_electrical
     category: info
-    name: "查询电气数据"
-    description: "查询充电桩电压、电流、功率等电气参数"
+    name: "Check Electrical Data"
+    description: "Get the charger's voltage, current, power and other electrical readings"
     triggers:
-      - "电气数据"
-      - "充电功率"
-      - "功率多少"
-      - "电压电流"
+      - "electrical data"
+      - "charging power"
+      - "what's the power"
+      - "voltage and current"
     parameters: []
     action:
       id: "charger.getElectricalData"
       payload_template: {}
     responses:
-      success: "当前功率${power}kW，输出电压${outputVoltage}V，电流${outputCurrent}A，已充${totalEnergy}度电"
+      success: "Power is ${power} kW, output voltage ${outputVoltage} V, current ${outputCurrent} A, ${totalEnergy} kWh delivered"
 
   - id: charger.get_temperature
     category: info
-    name: "查询温度"
-    description: "查询充电桩温度监测数据"
+    name: "Check Temperature"
+    description: "Get the charger's temperature readings"
     triggers:
-      - "温度多少"
-      - "充电桩温度"
-      - "枪头温度"
+      - "what's the temperature"
+      - "charger temperature"
+      - "connector temperature"
     parameters: []
     action:
       id: "charger.getTemperature"
       payload_template: {}
     responses:
-      success: "枪头温度${connector}度，模块温度${module}度，环境温度${ambient}度"
+      success: "Connector ${connector} degrees, module ${module} degrees, ambient ${ambient} degrees"
 
   - id: charger.get_billing
     category: info
-    name: "查询费用"
-    description: "查询当前充电费用信息"
+    name: "Check Cost"
+    description: "Get the current charging cost"
     triggers:
-      - "花了多少钱"
-      - "充电费用"
-      - "多少钱"
-      - "费用多少"
+      - "how much has it cost"
+      - "charging cost"
+      - "how much is it"
+      - "what's the cost"
     parameters: []
     action:
       id: "charger.getBilling"
       payload_template: {}
     responses:
-      success: "电价${rate}元每度，已充${totalEnergy}度，当前费用${currentCost}元"
+      success: "The rate is ${rate} yuan per kWh, ${totalEnergy} kWh delivered, ${currentCost} yuan so far"
 
   - id: session.exit
     category: session
-    name: "退出会话"
-    description: "结束当前语音会话，断开连接"
+    name: "Exit Session"
+    description: "End the current voice session and disconnect"
     triggers:
-      - "关闭"
-      - "退出"
-      - "退下"
-      - "再见"
-      - "拜拜"
-      - "结束对话"
-      - "结束会话"
-      - "断开连接"
-      - "关闭语音助手"
-      - "退出语音"
-      - "不用了"
-      - "没事了"
-      - "好了"
+      - "close"
+      - "exit"
+      - "dismiss"
+      - "goodbye"
+      - "bye bye"
+      - "end the conversation"
+      - "end the session"
+      - "disconnect"
+      - "close the voice assistant"
+      - "exit voice"
+      - "never mind"
+      - "that's all"
+      - "I'm done"
       - "quit"
       - "exit"
       - "turn off"
@@ -204,4 +204,4 @@ skills:
       payload_template:
         command: "disconnect"
     responses:
-      success: "好的，再见！"
+      success: "OK, goodbye!"

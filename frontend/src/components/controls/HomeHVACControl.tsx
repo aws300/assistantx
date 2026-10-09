@@ -17,18 +17,18 @@ import { Icon } from '@/components/ui/Icon';
 import { homeStore, HvacMode, HomeFanSpeed } from '@/stores/homeStore';
 
 const modeOptions: { value: HvacMode; label: string; icon: string }[] = [
-  { value: 'cool', label: '制冷', icon: 'ac_unit' },
-  { value: 'heat', label: '制热', icon: 'wb_sunny' },
-  { value: 'auto', label: '自动', icon: 'hdr_auto' },
-  { value: 'fan', label: '送风', icon: 'air' },
-  { value: 'dry', label: '除湿', icon: 'water_drop' },
+  { value: 'cool', label: 'Cool', icon: 'ac_unit' },
+  { value: 'heat', label: 'Heat', icon: 'wb_sunny' },
+  { value: 'auto', label: 'Auto', icon: 'hdr_auto' },
+  { value: 'fan', label: 'Fan', icon: 'air' },
+  { value: 'dry', label: 'Dry', icon: 'water_drop' },
 ];
 
 const fanOptions: { value: HomeFanSpeed; label: string }[] = [
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'auto', label: '自动' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'auto', label: 'Auto' },
 ];
 
 export const HomeHVACControl: Component = () => {
@@ -38,7 +38,7 @@ export const HomeHVACControl: Component = () => {
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <Icon name="thermostat" size="sm" class="text-blue-600" />
-          <span class="text-sm font-semibold text-gray-700">空调控制</span>
+          <span class="text-sm font-semibold text-gray-700">Climate Control</span>
         </div>
         <button
           class={cn(
@@ -105,7 +105,7 @@ export const HomeHVACControl: Component = () => {
         <div class="mb-4">
           <div class="flex items-center gap-2 mb-2">
             <Icon name="tune" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-500">模式</span>
+            <span class="text-sm text-gray-500">Mode</span>
           </div>
           <div class="flex gap-2">
             <For each={modeOptions}>
@@ -131,7 +131,7 @@ export const HomeHVACControl: Component = () => {
         <div>
           <div class="flex items-center gap-2 mb-2">
             <Icon name="air" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-500">风速</span>
+            <span class="text-sm text-gray-500">Fan Speed</span>
           </div>
           <div class="flex gap-2">
             <For each={fanOptions}>

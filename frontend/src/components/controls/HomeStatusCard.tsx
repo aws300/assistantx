@@ -17,18 +17,18 @@ import { Icon } from '@/components/ui/Icon';
 import { homeStore } from '@/stores/homeStore';
 
 const weatherIconMap: Record<string, string> = {
-  '晴': 'wb_sunny',
-  '多云': 'cloud',
-  '阴': 'cloud',
-  '小雨': 'rainy',
+  'Sunny': 'wb_sunny',
+  'Cloudy': 'cloud',
+  'Overcast': 'cloud',
+  'Light rain': 'rainy',
 };
 
 export const HomeStatusCard: Component = () => {
   const pm25Level = () => {
     const val = homeStore.state.info.pm25;
-    if (val < 35) return { label: '优', color: 'text-green-600' };
-    if (val < 75) return { label: '良', color: 'text-yellow-600' };
-    return { label: '轻度污染', color: 'text-red-600' };
+    if (val < 35) return { label: 'Good', color: 'text-green-600' };
+    if (val < 75) return { label: 'Moderate', color: 'text-yellow-600' };
+    return { label: 'Unhealthy', color: 'text-red-600' };
   };
 
   return (
@@ -36,7 +36,7 @@ export const HomeStatusCard: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="home" size="sm" class="text-blue-600" />
-        <span class="text-sm font-semibold text-gray-700">房屋状态</span>
+        <span class="text-sm font-semibold text-gray-700">Home Status</span>
       </div>
 
       {/* Weather and Outside Temp */}
@@ -55,7 +55,7 @@ export const HomeStatusCard: Component = () => {
           <div class="text-3xl font-bold text-gray-800">
             {homeStore.state.info.outsideTemp}°
           </div>
-          <div class="text-xs text-gray-500">室外温度</div>
+          <div class="text-xs text-gray-500">Outside</div>
         </div>
       </div>
 
@@ -68,7 +68,7 @@ export const HomeStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{homeStore.state.info.insideTemp}°C</div>
-            <div class="text-xs text-gray-500">室内温度</div>
+            <div class="text-xs text-gray-500">Inside</div>
           </div>
         </div>
 
@@ -79,7 +79,7 @@ export const HomeStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{homeStore.state.info.humidity}%</div>
-            <div class="text-xs text-gray-500">湿度</div>
+            <div class="text-xs text-gray-500">Humidity</div>
           </div>
         </div>
 

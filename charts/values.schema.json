@@ -93,6 +93,11 @@
         "existingSecretName": {
           "type": "string",
           "description": "Name of a pre-existing Secret supplying backend-config.yaml, agent-config.yaml and livekit-config.yaml. When set, the chart renders no Secret and the credential values are unused."
+        },
+        "corsAllowedOrigins": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra browser origins allowed to call the backend cross-origin. https://<host.frontend> is always allowed."
         }
       }
     }

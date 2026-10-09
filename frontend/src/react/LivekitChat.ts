@@ -139,11 +139,11 @@ function AgentStatusBar({ state, audioTrack }: { state: string; audioTrack?: any
   if (!state || state === 'idle' || state === 'disconnected') return null;
 
   const labels: Record<string, string> = {
-    listening: '\u6b63\u5728\u8046\u542c',
-    thinking: '\u601d\u8003\u4e2d',
-    speaking: '\u56de\u590d\u4e2d',
-    connecting: '\u8fde\u63a5\u4e2d',
-    initializing: '\u521d\u59cb\u5316',
+    listening: 'Listening',
+    thinking: 'Thinking',
+    speaking: 'Responding',
+    connecting: 'Connecting',
+    initializing: 'Initializing',
   };
 
   // Speaking: BarVisualizer
@@ -255,8 +255,8 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
             h('div', { className: 'w-13 h-13 rounded-full flex items-center justify-center bg-primary/10 border border-primary/10' },
               micon('graphic_eq', 'text-[26px] text-primary'),
             ),
-            h('p', { className: 'font-medium text-sm text-text-primary' }, '\u5f00\u59cb\u5bf9\u8bdd'),
-            h('p', { className: 'text-xs text-text-muted' }, '\u8bf4\u8bdd\u6216\u8f93\u5165\u6587\u5b57'),
+            h('p', { className: 'font-medium text-sm text-text-primary' }, 'Start conversation'),
+            h('p', { className: 'text-xs text-text-muted' }, 'Speak or type a message'),
           )
         : h(React.Fragment, null,
             ...msgs.map(m =>
@@ -282,7 +282,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
                 },
                   h(BarVisualizer, { state: 'speaking' as any, trackRef: agentAudioTrack, barCount: 5, options: { minHeight: 3 }, style: { height: '100%' } }),
                 ),
-                h('span', { className: 'text-xs text-text-muted' }, '\u6b63\u5728\u8bf4\u8bdd...'),
+                h('span', { className: 'text-xs text-text-muted' }, 'Speaking...'),
               ),
             ),
             h('div', { ref: endRef }),
@@ -295,7 +295,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
         // Mic
         h('button', {
           onClick: toggleMic,
-          title: isMicrophoneEnabled ? '\u9759\u97f3' : '\u5f00\u9ea6',
+          title: isMicrophoneEnabled ? 'Mute' : 'Unmute',
           className: [
             'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border-none cursor-pointer transition-all duration-200',
             isMicrophoneEnabled ? 'bg-primary text-white shadow-primary/20 shadow-md' : 'bg-black/5 text-text-muted',
@@ -308,7 +308,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
             ref: inputRef, type: 'text', value: inputText,
             onChange: (e: React.ChangeEvent<HTMLInputElement>) => setInputText(e.target.value),
             onKeyDown: onKey,
-            placeholder: agentState === 'listening' ? '\u6b63\u5728\u8046\u542c...' : agentState === 'speaking' ? '\u52a9\u624b\u56de\u590d\u4e2d...' : '\u8f93\u5165\u6d88\u606f...',
+            placeholder: agentState === 'listening' ? 'Listening...' : agentState === 'speaking' ? 'Assistant is responding...' : 'Type a message...',
             disabled: chat.isSending,
             className: 'input-inner flex-1 px-3.5 py-1.5 text-[13px] text-text-primary font-[inherit]',
           }),
@@ -316,7 +316,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
 
         // Send
         h('button', {
-          onClick: handleSend, disabled: !inputText.trim() || chat.isSending, title: '\u53d1\u9001',
+          onClick: handleSend, disabled: !inputText.trim() || chat.isSending, title: 'Send',
           className: [
             'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border-none transition-all duration-200',
             inputText.trim() ? 'bg-primary text-white shadow-primary/20 shadow-md cursor-pointer' : 'bg-black/5 text-black/20 cursor-default',
@@ -326,7 +326,7 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
         // Speaker
         h('button', {
           onClick: toggleSpeaker,
-          title: speakerMuted ? '\u5f00\u542f\u8bed\u97f3' : '\u9759\u97f3',
+          title: speakerMuted ? 'Unmute' : 'Mute',
           className: [
             'w-9 h-9 rounded-full flex items-center justify-center shrink-0 border cursor-pointer transition-all duration-200',
             speakerMuted ? 'bg-amber-50 text-amber-600 border-amber-200/50' : 'bg-white/50 text-text-muted border-black/5',
@@ -343,14 +343,14 @@ function ChatInner({ room, onDisconnect }: { room: Room; onDisconnect: () => voi
               agentState === 'speaking' ? 'bg-primary' : agentState === 'thinking' ? 'bg-amber-500' : agentState === 'listening' ? 'bg-primary' : 'bg-gray-400',
             ].join(' '),
           }),
-          h('span', { className: 'text-[11px] text-text-muted' }, speakerMuted ? '\u6587\u5b57\u6a21\u5f0f' : '\u8bed\u97f3\u6a21\u5f0f'),
+          h('span', { className: 'text-[11px] text-text-muted' }, speakerMuted ? 'Text mode' : 'Voice mode'),
         ),
         h('button', {
           onClick: onDisconnect,
           className: 'flex items-center gap-1 text-[11px] text-red-500 bg-transparent border-none cursor-pointer px-2 py-1 rounded-lg hover:bg-red-500/5 transition-colors',
         },
           micon('call_end', 'text-[14px] text-red-500'),
-          '\u65ad\u5f00\u8fde\u63a5',
+          'Disconnect',
         ),
       ),
     ),
@@ -511,10 +511,10 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
           micon('chat_bubble', `text-[18px] ${isConnected ? 'text-primary' : 'text-text-muted'}`),
           isConnected && h('div', { className: 'absolute -top-0.5 -right-0.5 w-[7px] h-[7px] rounded-full bg-primary border-[1.5px] border-white' }),
         ),
-        h('span', { className: 'text-[13px] font-semibold text-text-primary' }, '\u8bed\u97f3\u52a9\u624b'),
+        h('span', { className: 'text-[13px] font-semibold text-text-primary' }, 'Voice Assistant'),
         h('span', {
           className: `text-[11px] font-medium ${isConnected ? 'text-primary' : connState === 'connecting' ? 'text-amber-500' : 'text-text-muted'}`,
-        }, isConnected ? '\u5df2\u8fde\u63a5' : connState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u672a\u8fde\u63a5'),
+        }, isConnected ? 'Connected' : connState === 'connecting' ? 'Connecting...' : 'Not connected'),
       ),
       micon(expanded ? 'expand_more' : 'expand_less', 'text-[18px] text-text-muted'),
     ),
@@ -528,8 +528,8 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
               micon(connState === 'connecting' ? 'sync' : 'graphic_eq',
                 `text-[26px] text-primary ${connState === 'connecting' ? 'lk-spin' : ''}`),
             ),
-            h('p', { className: 'font-semibold text-sm text-text-primary m-0' }, '\u8bed\u97f3\u52a9\u624b'),
-            h('p', { className: 'text-xs text-text-muted m-0 mb-3.5' }, '\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\u5f00\u59cb\u5bf9\u8bdd'),
+            h('p', { className: 'font-semibold text-sm text-text-primary m-0' }, 'Voice Assistant'),
+            h('p', { className: 'text-xs text-text-muted m-0 mb-3.5' }, 'Tap the button below to start a conversation'),
             h('button', {
               onClick: connect,
               disabled: connState === 'connecting',
@@ -542,7 +542,7 @@ function LivekitChatPanel({ scene, onSessionStart, onSessionEnd, handleRef }: Pa
             },
               micon(connState === 'connecting' ? 'sync' : 'phone_in_talk',
                 `text-[16px] ${connState === 'connecting' ? 'lk-spin' : ''}`),
-              connState === 'connecting' ? '\u8fde\u63a5\u4e2d...' : '\u5f00\u59cb\u5bf9\u8bdd',
+              connState === 'connecting' ? 'Connecting...' : 'Start conversation',
             ),
             error && h('p', { className: 'text-[11px] text-red-500 mt-2.5 text-center' }, error),
           )

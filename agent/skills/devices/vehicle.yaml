@@ -1,9 +1,9 @@
 metadata:
   device_type: vehicle
-  device_name: "智能座舱"
+  device_name: "Smart Cockpit"
   version: "1.0.0"
-  language: zh-CN
-  description: "车载语音控制系统技能配置"
+  language: en-US
+  description: "Skill configuration for the in-car voice control system"
 
 settings:
   session_timeout_minutes: 5
@@ -12,43 +12,43 @@ settings:
 
 categories:
   - id: hvac
-    name: "空调控制"
+    name: "Climate Control"
     icon: "thermometer"
-    description: "温度、风速、空调模式控制"
+    description: "Temperature, fan speed and A/C mode control"
   - id: windows
-    name: "车窗控制"
+    name: "Window Control"
     icon: "square"
-    description: "车窗、天窗开关控制"
+    description: "Open and close windows and the sunroof"
   - id: seats
-    name: "座椅控制"
+    name: "Seat Control"
     icon: "armchair"
-    description: "座椅加热、通风、位置调节"
+    description: "Seat heating, ventilation and position"
   - id: lighting
-    name: "灯光控制"
+    name: "Lighting Control"
     icon: "lightbulb"
-    description: "车内灯光、氛围灯控制"
+    description: "Interior and ambient lighting"
   - id: media
-    name: "媒体控制"
+    name: "Media Control"
     icon: "music"
-    description: "音量、音源控制"
+    description: "Volume and audio source control"
   - id: info
-    name: "信息查询"
+    name: "Vehicle Info"
     icon: "info"
-    description: "车辆状态信息查询"
+    description: "Vehicle status queries"
   - id: session
-    name: "会话控制"
+    name: "Session Control"
     icon: "power"
-    description: "语音会话管理，包括退出、关闭等"
+    description: "Voice session management, such as exiting or closing"
 
 skills:
   - id: hvac.set_temperature
     category: hvac
-    name: "设置温度"
-    description: "设置车内空调温度，支持分区控制"
+    name: "Set Temperature"
+    description: "Set the cabin A/C temperature, with per-zone control"
     triggers:
-      - "把温度调到{temperature}度"
-      - "设置温度{temperature}"
-      - "空调{temperature}度"
+      - "set the temperature to {temperature} degrees"
+      - "temperature {temperature}"
+      - "A/C to {temperature} degrees"
     parameters:
       - name: temperature
         type: number
@@ -62,96 +62,96 @@ skills:
         default: "all"
         options:
           - value: "all"
-            aliases: ["全部", "所有"]
+            aliases: ["all", "everyone"]
           - value: "driver"
-            aliases: ["驾驶位", "主驾"]
+            aliases: ["driver", "driver side"]
           - value: "passenger"
-            aliases: ["副驾驶", "副驾"]
+            aliases: ["passenger", "passenger side"]
     action:
       id: "hvac.setTemperature"
       payload_template:
         temperature: "${temperature}"
         zone: "${zone}"
     responses:
-      success: "好的，已将${zone}温度设置为${temperature}度"
+      success: "OK, the ${zone} temperature is set to ${temperature} degrees"
 
   - id: hvac.toggle_ac
     category: hvac
-    name: "空调开关"
-    description: "打开或关闭空调"
+    name: "A/C On/Off"
+    description: "Turn the A/C on or off"
     triggers:
-      - "打开空调"
-      - "关闭空调"
+      - "turn on the A/C"
+      - "turn off the A/C"
     parameters:
       - name: action
         type: enum
         required: true
         options:
           - value: "on"
-            aliases: ["打开", "开"]
+            aliases: ["turn on", "on"]
           - value: "off"
-            aliases: ["关闭", "关"]
+            aliases: ["turn off", "off"]
     action:
       id: "hvac.toggleAC"
       payload_template:
         action: "${action}"
     responses:
-      success: "好的，空调已${action}"
+      success: "OK, the A/C is ${action}"
 
   - id: hvac.set_fan_speed
     category: hvac
-    name: "设置风速"
-    description: "设置空调风扇速度"
+    name: "Set Fan Speed"
+    description: "Set the A/C fan speed"
     triggers:
-      - "风速调到{speed}档"
-      - "风大一点"
-      - "风小一点"
+      - "set the fan to level {speed}"
+      - "more air"
+      - "less air"
     parameters:
       - name: speed
         type: enum
         required: true
         options:
           - value: "auto"
-            aliases: ["自动"]
+            aliases: ["auto"]
           - value: "1"
-            aliases: ["一档", "低"]
+            aliases: ["level one", "low"]
           - value: "2"
-            aliases: ["二档", "中"]
+            aliases: ["level two", "medium"]
           - value: "3"
-            aliases: ["三档", "高"]
+            aliases: ["level three", "high"]
     action:
       id: "hvac.setFanSpeed"
       payload_template:
         speed: "${speed}"
     responses:
-      success: "好的，风速已设置为${speed}"
+      success: "OK, the fan speed is set to ${speed}"
 
   - id: hvac.get_temperature
     category: hvac
-    name: "查询温度"
-    description: "查询当前车内空调温度设置和车外温度"
+    name: "Check Temperature"
+    description: "Get the current cabin A/C temperature setting and the outside temperature"
     triggers:
-      - "空调温度多少"
-      - "现在温度是多少"
-      - "车内温度"
-      - "温度多少度"
-      - "查询温度"
+      - "what is the A/C temperature"
+      - "what's the temperature now"
+      - "cabin temperature"
+      - "how warm is it"
+      - "check the temperature"
     parameters: []
     action:
       id: "hvac.getTemperature"
       payload_template: {}
     responses:
-      success: "当前车内温度${current}度，目标温度${target}度，车外温度${outside}度"
+      success: "The cabin is ${current} degrees, the target is ${target} degrees, and it is ${outside} degrees outside"
 
   - id: windows.control
     category: windows
-    name: "车窗控制"
-    description: "打开或关闭车窗"
+    name: "Window Control"
+    description: "Open or close the windows"
     triggers:
-      - "打开{window}车窗"
-      - "关闭{window}车窗"
-      - "开窗"
-      - "关窗"
+      - "open the {window} window"
+      - "close the {window} window"
+      - "open the windows"
+      - "close the windows"
     parameters:
       - name: window
         type: enum
@@ -159,21 +159,21 @@ skills:
         default: "all"
         options:
           - value: "all"
-            aliases: ["所有", "全部"]
+            aliases: ["all", "every"]
           - value: "front_left"
-            aliases: ["左前", "驾驶位"]
+            aliases: ["front left", "driver"]
           - value: "front_right"
-            aliases: ["右前", "副驾驶"]
+            aliases: ["front right", "passenger"]
           - value: "sunroof"
-            aliases: ["天窗"]
+            aliases: ["sunroof"]
       - name: action
         type: enum
         required: true
         options:
           - value: "open"
-            aliases: ["打开", "开"]
+            aliases: ["open"]
           - value: "close"
-            aliases: ["关闭", "关"]
+            aliases: ["close", "shut"]
       - name: position
         type: number
         required: false
@@ -187,16 +187,16 @@ skills:
         action: "${action}"
         position: "${position}"
     responses:
-      success: "好的，${window}车窗已${action}"
+      success: "OK, the ${window} window is ${action}"
 
   - id: seats.heating
     category: seats
-    name: "座椅加热"
-    description: "控制座椅加热功能"
+    name: "Seat Heating"
+    description: "Control seat heating"
     triggers:
-      - "打开座椅加热"
-      - "关闭座椅加热"
-      - "座椅加热{level}档"
+      - "turn on seat heating"
+      - "turn off seat heating"
+      - "seat heating level {level}"
     parameters:
       - name: seat
         type: enum
@@ -204,9 +204,9 @@ skills:
         default: "driver"
         options:
           - value: "driver"
-            aliases: ["驾驶位", "主驾"]
+            aliases: ["driver", "driver seat"]
           - value: "passenger"
-            aliases: ["副驾驶", "副驾"]
+            aliases: ["passenger", "passenger seat"]
       - name: level
         type: number
         required: false
@@ -219,15 +219,15 @@ skills:
         seat: "${seat}"
         level: "${level}"
     responses:
-      success: "好的，${seat}座椅加热已设置为${level}档"
+      success: "OK, ${seat} seat heating is set to level ${level}"
 
   - id: seats.cooling
     category: seats
-    name: "座椅通风"
-    description: "控制座椅通风功能"
+    name: "Seat Ventilation"
+    description: "Control seat ventilation"
     triggers:
-      - "打开座椅通风"
-      - "关闭座椅通风"
+      - "turn on seat ventilation"
+      - "turn off seat ventilation"
     parameters:
       - name: seat
         type: enum
@@ -235,9 +235,9 @@ skills:
         default: "driver"
         options:
           - value: "driver"
-            aliases: ["驾驶位", "主驾"]
+            aliases: ["driver", "driver seat"]
           - value: "passenger"
-            aliases: ["副驾驶", "副驾"]
+            aliases: ["passenger", "passenger seat"]
       - name: level
         type: number
         required: false
@@ -250,26 +250,26 @@ skills:
         seat: "${seat}"
         level: "${level}"
     responses:
-      success: "好的，${seat}座椅通风已设置为${level}档"
+      success: "OK, ${seat} seat ventilation is set to level ${level}"
 
   - id: lighting.interior
     category: lighting
-    name: "车内灯光"
-    description: "控制车内照明灯"
+    name: "Interior Lights"
+    description: "Control the interior lights"
     triggers:
-      - "打开车内灯"
-      - "关闭车内灯"
-      - "开灯"
-      - "关灯"
+      - "turn on the interior lights"
+      - "turn off the interior lights"
+      - "lights on"
+      - "lights off"
     parameters:
       - name: action
         type: enum
         required: true
         options:
           - value: "on"
-            aliases: ["打开", "开"]
+            aliases: ["turn on", "on"]
           - value: "off"
-            aliases: ["关闭", "关"]
+            aliases: ["turn off", "off"]
       - name: brightness
         type: number
         required: false
@@ -281,16 +281,16 @@ skills:
         action: "${action}"
         brightness: "${brightness}"
     responses:
-      success: "好的，车内灯已${action}"
+      success: "OK, the interior lights are ${action}"
 
   - id: lighting.ambient
     category: lighting
-    name: "氛围灯"
-    description: "控制氛围灯颜色和亮度"
+    name: "Ambient Lighting"
+    description: "Control ambient light color and brightness"
     triggers:
-      - "把氛围灯调成{color}"
-      - "打开氛围灯"
-      - "关闭氛围灯"
+      - "set the ambient light to {color}"
+      - "turn on the ambient light"
+      - "turn off the ambient light"
     parameters:
       - name: action
         type: enum
@@ -298,30 +298,30 @@ skills:
         default: "set"
         options:
           - value: "on"
-            aliases: ["打开", "开"]
+            aliases: ["turn on", "on"]
           - value: "off"
-            aliases: ["关闭", "关"]
+            aliases: ["turn off", "off"]
           - value: "set"
-            aliases: ["设置", "调成"]
+            aliases: ["set", "change to"]
       - name: color
         type: enum
         required: false
         default: "#3B82F6"
         options:
           - value: "#3B82F6"
-            aliases: ["蓝色", "蓝"]
+            aliases: ["blue"]
           - value: "#EF4444"
-            aliases: ["红色", "红"]
+            aliases: ["red"]
           - value: "#22C55E"
-            aliases: ["绿色", "绿"]
+            aliases: ["green"]
           - value: "#A855F7"
-            aliases: ["紫色", "紫"]
+            aliases: ["purple"]
           - value: "#F97316"
-            aliases: ["橙色", "橙"]
+            aliases: ["orange"]
           - value: "#EC4899"
-            aliases: ["粉色", "粉"]
+            aliases: ["pink"]
           - value: "#6B7280"
-            aliases: ["白色", "白"]
+            aliases: ["white"]
       - name: brightness
         type: number
         required: false
@@ -335,30 +335,30 @@ skills:
         color: "${color}"
         brightness: "${brightness}"
     responses:
-      success: "好的，氛围灯已设置为${color}"
+      success: "OK, the ambient light is set to ${color}"
 
   - id: media.volume
     category: media
-    name: "音量控制"
-    description: "调节媒体音量"
+    name: "Volume Control"
+    description: "Adjust the media volume"
     triggers:
-      - "音量调到{level}"
-      - "大声一点"
-      - "小声一点"
-      - "静音"
+      - "set the volume to {level}"
+      - "louder"
+      - "quieter"
+      - "mute"
     parameters:
       - name: action
         type: enum
         required: true
         options:
           - value: "set"
-            aliases: ["设置", "调到"]
+            aliases: ["set", "set to"]
           - value: "up"
-            aliases: ["大声", "调高"]
+            aliases: ["louder", "turn up"]
           - value: "down"
-            aliases: ["小声", "调低"]
+            aliases: ["quieter", "turn down"]
           - value: "mute"
-            aliases: ["静音"]
+            aliases: ["mute"]
       - name: level
         type: number
         required: false
@@ -370,46 +370,46 @@ skills:
         action: "${action}"
         level: "${level}"
     responses:
-      success: "好的，音量已${action}"
+      success: "OK, volume ${action}"
 
   - id: info.vehicle_status
     category: info
-    name: "车辆状态"
-    description: "查询电动车整体状态，包括电量、续航里程等"
+    name: "Vehicle Status"
+    description: "Get the overall EV status, including battery level and remaining range"
     triggers:
-      - "车辆状态"
-      - "汽车状态怎么样"
-      - "电量多少"
-      - "还有多少电"
-      - "续航多少"
-      - "还能跑多远"
-      - "剩余电量"
-      - "电池状态"
+      - "vehicle status"
+      - "how is the car doing"
+      - "battery level"
+      - "how much charge is left"
+      - "what's the range"
+      - "how far can I go"
+      - "remaining battery"
+      - "battery status"
     parameters: []
     action:
       id: "info.getVehicleStatus"
       payload_template: {}
     responses:
-      success: "当前车速${speed}公里每小时，剩余电量${battery}%，预计续航${range}公里"
+      success: "Current speed is ${speed} kilometers per hour, battery is at ${battery}%, and the estimated range is ${range} kilometers"
 
   - id: session.exit
     category: session
-    name: "退出会话"
-    description: "结束当前语音会话，断开连接"
+    name: "Exit Session"
+    description: "End the current voice session and disconnect"
     triggers:
-      - "关闭"
-      - "退出"
-      - "退下"
-      - "再见"
-      - "拜拜"
-      - "结束对话"
-      - "结束会话"
-      - "断开连接"
-      - "关闭语音助手"
-      - "退出语音"
-      - "不用了"
-      - "没事了"
-      - "好了"
+      - "close"
+      - "exit"
+      - "dismiss"
+      - "goodbye"
+      - "bye bye"
+      - "end the conversation"
+      - "end the session"
+      - "disconnect"
+      - "close the voice assistant"
+      - "exit voice"
+      - "never mind"
+      - "that's all"
+      - "I'm done"
       - "quit"
       - "exit"
       - "turn off"
@@ -420,21 +420,21 @@ skills:
       payload_template:
         command: "disconnect"
     responses:
-      success: "好的，再见！"
+      success: "OK, goodbye!"
 
 rag_queries:
   - id: vehicle_manual
-    name: "车辆手册查询"
-    description: "查询车辆使用手册中的信息"
+    name: "Vehicle Manual Lookup"
+    description: "Look up information in the vehicle owner's manual"
     knowledge_base_id: "FHRCYNULOS"
     region: "us-west-2"
     triggers:
-      - "怎么{action}"
-      - "{feature}在哪里"
-      - "如何使用{feature}"
-      - "{feature}怎么用"
-      - "告诉我关于{topic}"
+      - "how do I {action}"
+      - "where is the {feature}"
+      - "how to use {feature}"
+      - "how does {feature} work"
+      - "tell me about {topic}"
     responses:
       success: "${answer}"
-      not_found: "抱歉，我在手册中没有找到相关信息"
-      error: "查询出错，请稍后重试"
+      not_found: "Sorry, I couldn't find that in the manual"
+      error: "The lookup failed, please try again later"

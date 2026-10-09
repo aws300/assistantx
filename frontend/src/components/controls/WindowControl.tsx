@@ -61,7 +61,7 @@ const WindowButton: Component<WindowButtonProps> = (props) => {
   );
 };
 
-const windowLabels = ['左前', '右前', '左后', '右后', '天窗'];
+const windowLabels = ['Front Left', 'Front Right', 'Rear Left', 'Rear Right', 'Sunroof'];
 
 export const WindowControl: Component = () => {
   return (
@@ -70,13 +70,13 @@ export const WindowControl: Component = () => {
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <Icon name="window" size="sm" class="text-blue-600" />
-          <span class="text-sm font-semibold text-gray-700">车窗控制</span>
+          <span class="text-sm font-semibold text-gray-700">Window Control</span>
         </div>
         <button
           class="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
           onClick={() => vehicleStore.setAllWindows(0)}
         >
-          全关
+          All Off
         </button>
       </div>
 
@@ -101,7 +101,7 @@ export const WindowControl: Component = () => {
               style={{ height: `${100 - vehicleStore.state.windows[4].position}%` }}
             />
           </div>
-          <span class="text-xs text-gray-500 mt-2">天窗</span>
+          <span class="text-xs text-gray-500 mt-2">Sunroof</span>
           <div class="flex gap-1 mt-2">
             <button
               onClick={() =>

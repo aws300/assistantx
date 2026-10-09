@@ -74,7 +74,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
       initialWakeWord: 'ok_computer',
     });
 
-    // Do NOT auto-initialize on mount. User must click "开始" to start.
+    // Do NOT auto-initialize on mount. User must click "Start" to start.
     // Models will be loaded on first toggle click.
   });
 
@@ -147,29 +147,29 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
   // Status info
   const statusInfo = () => {
     if (props.isSessionActive) {
-      return { text: '会话中已暂停', color: 'text-gray-400', dot: 'bg-gray-400', animate: false };
+      return { text: 'Paused during session', color: 'text-gray-400', dot: 'bg-gray-400', animate: false };
     }
     if (isSwitching()) {
-      return { text: '切换唤醒词中...', color: 'text-amber-600', dot: 'bg-amber-500', animate: true };
+      return { text: 'Switching wake word...', color: 'text-amber-600', dot: 'bg-amber-500', animate: true };
     }
     const ls = loadingState();
     if (ls.overall === 'loading') {
       const loaded = MODEL_KEYS.filter((k) => ls[k] === 'ready').length;
-      return { text: `加载模型中 (${loaded}/4)`, color: 'text-amber-600', dot: 'bg-amber-500', animate: true };
+      return { text: `Loading models (${loaded}/4)`, color: 'text-amber-600', dot: 'bg-amber-500', animate: true };
     }
     if (ls.overall === 'error') {
-      return { text: '加载失败', color: 'text-red-500', dot: 'bg-red-500', animate: false };
+      return { text: 'Failed to load', color: 'text-red-500', dot: 'bg-red-500', animate: false };
     }
     if (ls.overall === 'ready') {
       if (detected()) {
-        return { text: `检测到! (${((lastScore() ?? 0) * 100).toFixed(0)}%)`, color: 'text-primary', dot: 'bg-primary', animate: true };
+        return { text: `Detected! (${((lastScore() ?? 0) * 100).toFixed(0)}%)`, color: 'text-primary', dot: 'bg-primary', animate: true };
       }
       if (isListening()) {
-        return { text: '正在监听...', color: 'text-primary', dot: 'bg-primary', animate: true };
+        return { text: 'Listening...', color: 'text-primary', dot: 'bg-primary', animate: true };
       }
-      return { text: '已就绪', color: 'text-gray-500', dot: 'bg-gray-400', animate: false };
+      return { text: 'Ready', color: 'text-gray-500', dot: 'bg-gray-400', animate: false };
     }
-    return { text: '初始化...', color: 'text-gray-400', dot: 'bg-gray-300', animate: true };
+    return { text: 'Initializing...', color: 'text-gray-400', dot: 'bg-gray-300', animate: true };
   };
 
   const isReady = () => loadingState().overall === 'ready' && !isSwitching();
@@ -220,7 +220,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
                 <h3 class={cn('font-semibold', props.dark ? 'text-white/90' : 'text-gray-800')}>
                   {WAKE_WORD_CONFIG[currentWakeWord()].name}
                 </h3>
-                <p class={cn('text-xs', props.dark ? 'text-white/40' : 'text-gray-500')}>唤醒词</p>
+                <p class={cn('text-xs', props.dark ? 'text-white/40' : 'text-gray-500')}>Wake Word</p>
               </div>
             </div>
 
@@ -236,7 +236,7 @@ export const WakeWordCard: Component<WakeWordCardProps> = (rawProps) => {
               onClick={handleToggle}
               disabled={props.isSessionActive}
             >
-              {isListening() ? '停止' : '开始'}
+              {isListening() ? 'Stop' : 'Start'}
             </button>
           </div>
 

@@ -15,11 +15,14 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,6 +51,32 @@ type LivekitConfig struct {
 	SkillsDir string `yaml:"skillsDir"`
 }
 
+// scenes maps each scene the agent supports to the device whose skills it loads.
+var scenes = map[string]bool{"car": true, "home": true, "charger": true}
+
+// deviceNamePattern restricts device names to plain file stems so a request
+// cannot walk out of the skills directory (e.g. "../../configs/config").
+var deviceNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// roomNamePattern is the shape of the room names issued by roomPrefix/newRoomName.
+var roomNamePattern = regexp.MustCompile(`^u-[0-9a-f]{16}-[0-9a-f]{16}$`)
+
+// roomPrefix derives a per-user room prefix from the subject, so a user can
+// only ever be granted rooms that were issued to them.
+func roomPrefix(sub string) string {
+	h := sha256.Sum256([]byte(sub))
+	return "u-" + hex.EncodeToString(h[:8]) + "-"
+}
+
+// newRoomName returns an unguessable room name owned by sub.
+func newRoomName(sub string) (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return roomPrefix(sub) + hex.EncodeToString(b), nil
+}
+
 // LivekitServer implements the ConnectRPC LivekitService.
 type LivekitServer struct {
 	livekitv1connect.UnimplementedLivekitServiceHandler
@@ -62,16 +91,27 @@ func (s *LivekitServer) GetToken(
 	ctx context.Context,
 	req *connect.Request[livekitv1.GetTokenRequest],
 ) (*connect.Response[livekitv1.GetTokenResponse], error) {
-	sub, name := s.extractUserInfo(ctx)
+	sub, name, err := s.extractUserInfo(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid token"))
+	}
 
+	// Rooms are always owned by the caller: a client may rejoin one of its own
+	// rooms, but any other name is replaced with a fresh one so nobody can join
+	// another user's session.
 	roomName := req.Msg.RoomName
-	if roomName == "" {
-		roomName = fmt.Sprintf("room-%d", time.Now().UnixNano()%1000000)
+	if !roomNamePattern.MatchString(roomName) || !strings.HasPrefix(roomName, roomPrefix(sub)) {
+		if roomName, err = newRoomName(sub); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.New("generate room name"))
+		}
 	}
 
 	scene := req.Msg.Scene
 	if scene == "" {
 		scene = "car"
+	}
+	if !scenes[scene] {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unsupported scene: %q", scene))
 	}
 
 	// Create access token
@@ -99,20 +139,22 @@ func (s *LivekitServer) GetToken(
 
 	token, err := at.ToJWT()
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("generate token: %w", err))
+		log.Action("LivekitGetToken").Error("generate token: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, errors.New("generate token"))
 	}
 
-	log.Action("LivekitGetToken").Info(fmt.Sprintf("user=%s room=%s scene=%s", sub, roomName, scene))
+	log.Action("LivekitGetToken").Info("user=%q room=%q scene=%q", sub, roomName, scene)
 
 	// Dispatch agent to the room
 	if s.agentClient != nil {
+		dispatchMeta, _ := json.Marshal(map[string]string{"scene": scene})
 		_, err = s.agentClient.CreateDispatch(ctx, &livekit.CreateAgentDispatchRequest{
 			Room:      roomName,
 			AgentName: s.cfg.AgentName,
-			Metadata:  fmt.Sprintf(`{"scene":"%s"}`, scene),
+			Metadata:  string(dispatchMeta),
 		})
 		if err != nil {
-			log.Action("LivekitDispatch").Warn(fmt.Sprintf("failed to dispatch agent: %v", err))
+			log.Action("LivekitDispatch").Warn("failed to dispatch agent: %v", err)
 		}
 	}
 
@@ -146,32 +188,31 @@ func (s *LivekitServer) GetDeviceSkills(
 	return s.getSkillsForDevice(device)
 }
 
+// getSkillsForDevice serves skills/devices/<device>.yaml. This endpoint is
+// unauthenticated, so device is validated as a bare file stem and the file is
+// opened through os.Root, which refuses any path resolving outside SkillsDir.
 func (s *LivekitServer) getSkillsForDevice(device string) (*connect.Response[livekitv1.GetSkillsResponse], error) {
-	filename := device + ".yaml"
-	path := filepath.Join(s.cfg.SkillsDir, filename)
+	if !deviceNamePattern.MatchString(device) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid device name"))
+	}
 
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(s.cfg.SkillsDir)
 	if err != nil {
-		// Try to find any available skill file
-		files, _ := os.ReadDir(s.cfg.SkillsDir)
-		for _, f := range files {
-			if strings.HasSuffix(f.Name(), ".yaml") {
-				altPath := filepath.Join(s.cfg.SkillsDir, f.Name())
-				data, err = os.ReadFile(altPath)
-				if err == nil {
-					break
-				}
-			}
-		}
-		if err != nil {
-			return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("skills file not found"))
-		}
+		log.Action("GetSkills").Error("open skills dir: %v", err)
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("skills file not found"))
+	}
+	defer root.Close()
+
+	data, err := root.ReadFile(device + ".yaml")
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("skills file not found"))
 	}
 
 	// Parse YAML to generic map
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("parse skills: %w", err))
+		log.Action("GetSkills").Error("parse %s skills: %v", device, err)
+		return nil, connect.NewError(connect.CodeInternal, errors.New("parse skills"))
 	}
 
 	// Convert to protobuf Struct
@@ -183,7 +224,7 @@ func (s *LivekitServer) getSkillsForDevice(device string) (*connect.Response[liv
 		json.Unmarshal(jsonData, &m)
 		st, err = structpb.NewStruct(m)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("convert skills: %w", err))
+			return nil, connect.NewError(connect.CodeInternal, errors.New("convert skills"))
 		}
 	}
 
@@ -192,54 +233,35 @@ func (s *LivekitServer) getSkillsForDevice(device string) (*connect.Response[liv
 	}), nil
 }
 
-// extractUserInfo extracts user identity from the validated Bearer token.
-func (s *LivekitServer) extractUserInfo(ctx context.Context) (sub, name string) {
+// extractUserInfo extracts user identity from the Bearer token. The auth
+// middleware has already validated it; claims are only ever taken from a
+// verified token, never from a decoded-but-unverified payload.
+func (s *LivekitServer) extractUserInfo(ctx context.Context) (sub, name string, err error) {
 	if s.provider == nil {
-		return fmt.Sprintf("user-%s", time.Now().Format("20060102150405")), "Guest User"
+		// Guest mode: a random identity so guests never share a room prefix.
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			return "", "", err
+		}
+		return "guest-" + hex.EncodeToString(b), "Guest User", nil
 	}
 
 	authHeader := metadata.ExtractIncoming(ctx).Get("authorization")
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Try validated claims first
 	claims, err := s.provider.ValidateToken(token)
-	if err == nil {
-		sub = claims.Sub
-		name = claims.Name
-		if name == "" {
-			name = claims.Email
-		}
-		if name == "" {
-			name = claims.Sub
-		}
-		return sub, name
+	if err != nil {
+		return "", "", err
 	}
-
-	// Fallback: decode JWT payload manually
-	parts := strings.Split(token, ".")
-	if len(parts) == 3 {
-		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-			var c map[string]interface{}
-			if json.Unmarshal(payload, &c) == nil {
-				sub, _ = c["sub"].(string)
-				name, _ = c["name"].(string)
-				if name == "" {
-					for _, field := range []string{"username", "email", "phone_number", "sub"} {
-						if val, ok := c[field].(string); ok && val != "" {
-							name = val
-							break
-						}
-					}
-				}
-			}
-		}
+	sub = claims.Sub
+	name = claims.Name
+	if name == "" {
+		name = claims.Email
 	}
-
-	if sub == "" {
-		sub = fmt.Sprintf("user-%s", time.Now().Format("20060102150405"))
-		name = "Guest User"
+	if name == "" {
+		name = claims.Sub
 	}
-	return sub, name
+	return sub, name, nil
 }
 
 // RegisterLivekitService registers the LivekitService ConnectRPC handler.

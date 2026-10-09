@@ -10,8 +10,8 @@
 @import "@fontsource/inter/700.css";
 
 /* ============================================
-   Material Symbols - 自托管字体
-   从 public/assets/fonts 加载，避免 Vite 打包问题
+   Material Symbols - self-hosted font
+   Loaded from public/assets/fonts to avoid Vite bundling issues
    ============================================ */
 @font-face {
   font-family: 'Material Symbols Outlined';
@@ -21,7 +21,7 @@
   src: url('/assets/fonts/material-symbols.woff2') format('woff2');
 }
 
-/* Material Symbols 图标样式 */
+/* Material Symbols icon styles */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined', sans-serif;
   font-weight: normal;
@@ -41,8 +41,8 @@
 }
 
 /* ============================================
-   Global Reset - 全局重置
-   确保全屏高度
+   Global Reset
+   Ensure full-screen height
    ============================================ */
 html, body {
   height: 100%;
@@ -55,11 +55,11 @@ html, body {
 }
 
 /* ============================================
-   Theme Variables - 主题变量
-   修改主题色只需要修改这些变量即可
+   Theme Variables
+   Change these variables to change the theme color
    ============================================ */
 @theme {
-  /* Primary Color - 主色调 */
+  /* Primary Color */
   --color-primary: #ee2b6c;
   --color-primary-hover: #d6265f;
   
@@ -83,8 +83,8 @@ html, body {
 
 /* ============================================
    CSS Custom Properties for runtime theming
-   运行时主题变量 - 方便 JS 修改
-   默认为粉色主题 (Pink Theme)
+   Runtime theme variables - easy to change from JS
+   Defaults to the pink theme
    ============================================ */
 :root {
   /* Primary color with opacity variants */
@@ -110,7 +110,7 @@ html, body {
   --glass-dropdown-bg: #ffffffef;
   --glass-dropdown-blur: blur(16px) saturate(180%);
   
-  /* Aurora background colors - 极光背景颜色 */
+  /* Aurora background colors */
   --aurora-glow-1: #ffc8dd;
   --aurora-glow-2: #bde0fe;
   --aurora-gradient-1: hsl(336, 83%, 91%);
@@ -122,7 +122,7 @@ html, body {
 }
 
 /* ============================================
-   Glass Panel Styles - 玻璃面板样式
+   Glass Panel Styles
    ============================================ */
 .glass-panel {
   background-color: rgba(255, 255, 255, 0.45);
@@ -138,7 +138,7 @@ html, body {
   backdrop-filter: blur(30px) saturate(180%) !important;
 }
 
-/* Liquid Glass - 液态玻璃效果 */
+/* Liquid Glass */
 .liquid-glass {
   background: rgba(255, 255, 255, 0.45);
   -webkit-backdrop-filter: blur(20px);
@@ -147,7 +147,7 @@ html, body {
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03);
 }
 
-/* Glass Dropdown - 下拉菜单专用（高对比度） */
+/* Glass Dropdown - for dropdown menus (high contrast) */
 .glass-dropdown {
   background: var(--glass-dropdown-bg);
   backdrop-filter: var(--glass-dropdown-blur);
@@ -157,7 +157,7 @@ html, body {
 }
 
 /* ============================================
-   Glass Bubble Styles - 聊天气泡样式
+   Glass Bubble Styles
    ============================================ */
 .glass-bubble-agent {
   background-color: rgba(255, 255, 255, 0.6);
@@ -175,7 +175,7 @@ html, body {
 }
 
 /* ============================================
-   Glass Input Styles - 输入框样式
+   Glass Input Styles
    ============================================ */
 .glass-input {
   background-color: rgba(255, 255, 255, 0.7);
@@ -191,7 +191,7 @@ html, body {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05), 0 0 0 3px rgba(var(--primary-rgb), 0.12) !important;
 }
 
-/* Input Container Focus - 外层容器 focus 效果 */
+/* Input Container Focus - outer container focus effect */
 .input-container-focus {
   transition: all 0.2s ease;
 }
@@ -201,7 +201,7 @@ html, body {
   box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.12) !important;
 }
 
-/* Liquid Glass with Focus - 带焦点效果的液态玻璃 */
+/* Liquid Glass with Focus */
 .liquid-glass-focusable {
   background: rgba(255, 255, 255, 0.45);
   -webkit-backdrop-filter: blur(20px);
@@ -216,7 +216,7 @@ html, body {
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03), 0 0 0 3px rgba(var(--primary-rgb), 0.12) !important;
 }
 
-/* Inner Input - 内部输入框无边框 */
+/* Inner Input - borderless inner input */
 .input-inner {
   background: transparent;
   border: none !important;
@@ -232,7 +232,7 @@ html, body {
 }
 
 /* ============================================
-   Range Input (Slider) - 滑块主题色
+   Range Input (Slider) - theme-colored slider
    ============================================ */
 input[type="range"] {
   -webkit-appearance: none;
@@ -277,7 +277,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Scrollbar Styles - 滚动条样式
+   Scrollbar Styles
    ============================================ */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
@@ -307,7 +307,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Capability Chip Styles - 功能按钮样式
+   Capability Chip Styles
    ============================================ */
 .capability-chip {
   background-color: rgba(255, 255, 255, 0.5);
@@ -322,7 +322,7 @@ input[type="range"]::-moz-range-track {
   border-color: rgba(255, 255, 255, 0.6);
 }
 
-/* Selected Capability Tag - 选中的功能标签 */
+/* Selected Capability Tag */
 .capability-tag {
   background-color: rgba(var(--primary-rgb), 0.1);
   color: var(--primary);
@@ -357,7 +357,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Animations - 动画
+   Animations
    ============================================ */
 @keyframes ping-slow {
   75%, 100% {
@@ -371,7 +371,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Focus Ring - 聚焦环
+   Focus Ring
    ============================================ */
 .focus-ring:focus {
   outline: none;
@@ -383,8 +383,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Gradient Text - 渐变文字（静态）
-   使用主题颜色的静态渐变
+   Gradient Text (static)
+   Static gradient using the theme colors
    ============================================ */
 .gradient-text {
   background-image: linear-gradient(to right, var(--title-gradient-from), var(--title-gradient-to));
@@ -394,8 +394,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Animated Gradient Text - 动态渐变文字
-   颜色随主题变化，动画速度参考 aurora
+   Animated Gradient Text
+   Colors follow the theme; animation speed matches aurora
    ============================================ */
 .gradient-text-animated {
   background: linear-gradient(
@@ -431,7 +431,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Browser Window Dots - 浏览器窗口圆点
+   Browser Window Dots
    ============================================ */
 .browser-dot-red {
   background-color: #ff5f57;
@@ -449,7 +449,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Status Indicator - 状态指示器
+   Status Indicator
    ============================================ */
 .status-online {
   position: relative;
@@ -474,7 +474,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Background Gradient - 背景渐变
+   Background Gradient
    ============================================ */
 .bg-mesh-gradient {
   background-image: 
@@ -487,8 +487,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Aurora Background - 极光动态背景
-   带有动画效果的渐变背景，使用CSS变量支持主题切换
+   Aurora Background
+   Animated gradient background; uses CSS variables to support theme switching
    ============================================ */
 .aurora {
   position: relative;
@@ -568,7 +568,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Text Color Utilities - 文字颜色工具类
+   Text Color Utilities
    ============================================ */
 .text-text-primary {
   color: var(--text-primary);
@@ -583,8 +583,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Placeholder Color Utilities - 占位符颜色工具类
-   支持主题变量的 placeholder 颜色
+   Placeholder Color Utilities
+   Placeholder colors that follow the theme variables
    ============================================ */
 .placeholder-text-muted::placeholder {
   color: var(--text-muted);
@@ -595,7 +595,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Primary Color Utilities - 主色工具类
+   Primary Color Utilities
    ============================================ */
 .bg-primary {
   background-color: var(--primary);
@@ -642,7 +642,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Shadow Utilities - 阴影工具类
+   Shadow Utilities
    ============================================ */
 .shadow-primary\/20 {
   box-shadow: 0 10px 15px -3px rgba(var(--primary-rgb), 0.2);
@@ -657,7 +657,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Hover State Utilities - 悬停状态工具类
+   Hover State Utilities
    ============================================ */
 .hover\:bg-primary:hover {
   background-color: var(--primary);
@@ -676,7 +676,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Ring Utilities - 环形边框工具类
+   Ring Utilities
    ============================================ */
 .ring-primary\/20 {
   --tw-ring-color: rgba(var(--primary-rgb), 0.2);
@@ -695,7 +695,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Gradient Color Utilities - 渐变颜色工具类
+   Gradient Color Utilities
    ============================================ */
 .from-primary {
   --tw-gradient-from: var(--primary);
@@ -710,7 +710,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Secondary Color Utilities - 次要颜色工具类
+   Secondary Color Utilities
    ============================================ */
 .bg-secondary {
   background-color: var(--secondary);
@@ -741,7 +741,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Popover Styles - Popover 样式覆盖
+   Popover Styles - Popover style overrides
    ============================================ */
 [popover] {
   border: none;
@@ -757,7 +757,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Focus Ring with Theme Color - 主题色聚焦环
+   Focus Ring with Theme Color
    ============================================ */
 .focus-ring-primary:focus {
   --tw-ring-color: rgba(var(--primary-rgb), 0.3);
@@ -765,8 +765,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Toggle Switch - 开关按钮
-   使用 peer-checked 和主题变量
+   Toggle Switch
+   Uses peer-checked and the theme variables
    ============================================ */
 .toggle-switch-checked {
   transition: background-color 0.2s ease;
@@ -781,8 +781,8 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Dynamic Logo - 动态 Logo 配色
-   使用主题色作为渐变色
+   Dynamic Logo
+   Uses the theme color for the gradient
    ============================================ */
 .logo-stop-start {
   stop-color: var(--primary);
@@ -805,7 +805,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Resizable Panel - 可调整宽度面板
+   Resizable Panel
    ============================================ */
 .resize-handle {
   position: absolute;
@@ -842,7 +842,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Terminal Styles - 终端样式
+   Terminal Styles
    ============================================ */
 .terminal-container {
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', 'Droid Sans Mono', 'Source Code Pro', monospace;
@@ -878,7 +878,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Session Capacity Ring - 会话容量环
+   Session Capacity Ring
    ============================================ */
 .capacity-ring {
   transition: stroke-dasharray 0.3s ease;
@@ -893,7 +893,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Activity Step Styles - 活动步骤样式
+   Activity Step Styles
    ============================================ */
 .activity-step {
   display: flex;
@@ -921,7 +921,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Tab Panel Header - 标签页头部样式
+   Tab Panel Header
    ============================================ */
 .tab-button {
   display: flex;
@@ -970,7 +970,7 @@ input[type="range"]::-moz-range-track {
 
 
 /* ============================================
-   Toast Animation - Toast 通知动画
+   Toast Animation
    ============================================ */
 @keyframes slideIn {
   from {
@@ -988,7 +988,7 @@ input[type="range"]::-moz-range-track {
 }
 
 /* ============================================
-   Fixed Panels - 固定面板 (Cockpit ChatPanel)
+   Fixed Panels (Cockpit ChatPanel)
    ============================================ */
 .fixed-panels {
   position: fixed;

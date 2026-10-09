@@ -20,9 +20,9 @@ const heatingLevels = [0, 1, 2, 3];
 const coolingLevels = [0, 1, 2, 3];
 const massageModes: { value: MassageMode; label: string }[] = [
   { value: 'off', label: 'OFF' },
-  { value: 'wave', label: '波浪' },
-  { value: 'pulse', label: '脉冲' },
-  { value: 'stretch', label: '拉伸' },
+  { value: 'wave', label: 'Wave' },
+  { value: 'pulse', label: 'Pulse' },
+  { value: 'stretch', label: 'Stretch' },
 ];
 
 interface SeatPanelProps {
@@ -41,7 +41,7 @@ const SeatPanel: Component<SeatPanelProps> = (props) => {
       <div class="mb-3">
         <div class="flex items-center gap-1 mb-2">
           <Icon name="local_fire_department" size="xs" class="text-orange-500" />
-          <span class="text-xs text-gray-500">加热</span>
+          <span class="text-xs text-gray-500">Heating</span>
         </div>
         <div class="flex gap-1">
           <For each={heatingLevels}>
@@ -66,7 +66,7 @@ const SeatPanel: Component<SeatPanelProps> = (props) => {
       <div class="mb-3">
         <div class="flex items-center gap-1 mb-2">
           <Icon name="air" size="xs" class="text-cyan-500" />
-          <span class="text-xs text-gray-500">通风</span>
+          <span class="text-xs text-gray-500">Ventilation</span>
         </div>
         <div class="flex gap-1">
           <For each={coolingLevels}>
@@ -91,7 +91,7 @@ const SeatPanel: Component<SeatPanelProps> = (props) => {
       <div>
         <div class="flex items-center gap-1 mb-2">
           <Icon name="self_improvement" size="xs" class="text-purple-500" />
-          <span class="text-xs text-gray-500">按摩</span>
+          <span class="text-xs text-gray-500">Massage</span>
         </div>
         <div class="flex gap-1">
           <For each={massageModes}>
@@ -121,14 +121,14 @@ export const SeatControl: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="event_seat" size="sm" class="text-blue-600" />
-        <span class="text-sm font-semibold text-gray-700">座椅控制</span>
+        <span class="text-sm font-semibold text-gray-700">Seat Control</span>
       </div>
 
       {/* Seat panels */}
       <div class="flex gap-6">
-        <SeatPanel label="驾驶座" index={0} />
+        <SeatPanel label="Driver" index={0} />
         <div class="w-px bg-gray-200" />
-        <SeatPanel label="副驾驶" index={1} />
+        <SeatPanel label="Passenger" index={1} />
       </div>
     </div>
   );

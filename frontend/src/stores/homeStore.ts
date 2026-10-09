@@ -53,7 +53,7 @@ export interface HomeState {
 function createHomeStore() {
   const [state, setState] = createStore<HomeState>({
     info: {
-      weather: '晴',
+      weather: 'Sunny',
       outsideTemp: 28,
       insideTemp: 24,
       humidity: 55,

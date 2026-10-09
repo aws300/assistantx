@@ -26,14 +26,14 @@ export const ChargingDataCard: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="bolt" size="sm" class="text-blue-600" />
-        <span class="text-sm font-semibold text-gray-700">电气运行数据</span>
+        <span class="text-sm font-semibold text-gray-700">Electrical Data</span>
       </div>
 
       {/* Power Gauge */}
       <div class="mb-4">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-700">实时功率</span>
-          <span class="text-sm text-gray-500">最大 {maxPower} kW</span>
+          <span class="text-sm font-medium text-gray-700">Live Power</span>
+          <span class="text-sm text-gray-500">Max {maxPower} kW</span>
         </div>
         <div class="relative h-3 bg-gray-200 rounded-full overflow-hidden">
           <div
@@ -55,7 +55,7 @@ export const ChargingDataCard: Component = () => {
         <div class="p-3 rounded-lg bg-purple-50">
           <div class="flex items-center gap-2 mb-1">
             <Icon name="speed" size="xs" class="text-purple-600" />
-            <span class="text-xs text-gray-600">电压</span>
+            <span class="text-xs text-gray-600">Voltage</span>
           </div>
           <div class="text-xl font-bold text-gray-800">
             {chargerStore.state.electrical.voltage} V
@@ -66,7 +66,7 @@ export const ChargingDataCard: Component = () => {
         <div class="p-3 rounded-lg bg-green-50">
           <div class="flex items-center gap-2 mb-1">
             <Icon name="bolt" size="xs" class="text-green-600" />
-            <span class="text-xs text-gray-600">电流</span>
+            <span class="text-xs text-gray-600">Current</span>
           </div>
           <div class="text-xl font-bold text-gray-800">
             {chargerStore.state.electrical.current} A
@@ -84,7 +84,7 @@ export const ChargingDataCard: Component = () => {
             <div class="text-lg font-bold text-gray-800">
               {chargerStore.state.electrical.power.toFixed(1)}
             </div>
-            <div class="text-xs text-gray-500">功率 kW</div>
+            <div class="text-xs text-gray-500">Power kW</div>
           </div>
         </div>
 
@@ -96,7 +96,7 @@ export const ChargingDataCard: Component = () => {
             <div class="text-lg font-bold text-gray-800">
               {chargerStore.state.electrical.totalEnergy.toFixed(1)}
             </div>
-            <div class="text-xs text-gray-500">累计电量 kWh</div>
+            <div class="text-xs text-gray-500">Total Energy kWh</div>
           </div>
         </div>
       </div>

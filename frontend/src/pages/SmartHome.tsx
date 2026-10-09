@@ -96,16 +96,16 @@ const GlassBtn: Component<{
 // ---------------------------------------------------------------------------
 
 const weatherIconMap: Record<string, string> = {
-  '\u6674': 'wb_sunny',      // 晴
-  '\u591a\u4e91': 'cloud',   // 多云
-  '\u9634': 'cloud',         // 阴
-  '\u5c0f\u96e8': 'rainy',   // 小雨
+  'Sunny': 'wb_sunny',
+  'Cloudy': 'cloud',
+  'Overcast': 'cloud',
+  'Light rain': 'rainy',
 };
 const weatherColorMap: Record<string, string> = {
-  '\u6674': 'text-yellow-500',
-  '\u591a\u4e91': 'text-gray-500',
-  '\u9634': 'text-gray-600',
-  '\u5c0f\u96e8': 'text-primary',
+  'Sunny': 'text-yellow-500',
+  'Cloudy': 'text-gray-500',
+  'Overcast': 'text-gray-600',
+  'Light rain': 'text-primary',
 };
 
 const InlineHomeStatusCard: Component = () => {
@@ -113,7 +113,7 @@ const InlineHomeStatusCard: Component = () => {
 
   return (
     <GlassCard>
-      <CardHeader title="房屋状态" icon="home" />
+      <CardHeader title="Home Status" icon="home" />
 
       {/* Weather and Time */}
       <div class="flex items-center justify-between mb-4">
@@ -131,7 +131,7 @@ const InlineHomeStatusCard: Component = () => {
           <div class="text-3xl font-bold text-gray-800">
             {info().outsideTemp}&deg;
           </div>
-          <div class="text-xs text-gray-500">室外温度</div>
+          <div class="text-xs text-gray-500">Outside</div>
         </div>
       </div>
 
@@ -144,7 +144,7 @@ const InlineHomeStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{info().insideTemp}&deg;C</div>
-            <div class="text-xs text-gray-500">室内温度</div>
+            <div class="text-xs text-gray-500">Inside</div>
           </div>
         </div>
 
@@ -155,7 +155,7 @@ const InlineHomeStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{info().humidity}%</div>
-            <div class="text-xs text-gray-500">湿度</div>
+            <div class="text-xs text-gray-500">Humidity</div>
           </div>
         </div>
 
@@ -181,7 +181,7 @@ const InlineHomeStatusCard: Component = () => {
               </span>
             </div>
             <div class="text-xs text-gray-500">
-              {info().pm25 < 35 ? '优' : info().pm25 < 75 ? '良' : '轻度污染'}
+              {info().pm25 < 35 ? 'Good' : info().pm25 < 75 ? 'Moderate' : 'Unhealthy'}
             </div>
           </div>
         </div>
@@ -202,17 +202,17 @@ const modeIcons: Record<HvacMode, string> = {
   dry: 'water_drop',
 };
 const modeLabels: Record<HvacMode, string> = {
-  cool: '制冷',
-  heat: '制热',
-  auto: '自动',
-  fan: '送风',
-  dry: '除湿',
+  cool: 'Cool',
+  heat: 'Heat',
+  auto: 'Auto',
+  fan: 'Fan',
+  dry: 'Dry',
 };
 const fanLabels: Record<HomeFanSpeed, string> = {
-  low: '低',
-  medium: '中',
-  high: '高',
-  auto: '自动',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  auto: 'Auto',
 };
 
 const InlineHomeHVACControl: Component = () => {
@@ -221,7 +221,7 @@ const InlineHomeHVACControl: Component = () => {
   return (
     <GlassCard>
       <CardHeader
-        title="空调控制"
+        title="Climate Control"
         icon="thermostat"
         action={
           <GlassBtn
@@ -259,7 +259,7 @@ const InlineHomeHVACControl: Component = () => {
         {/* Slider */}
         <div class="mb-1">
           <div class="flex items-center justify-between text-sm text-gray-500 mb-1">
-            <span>温度</span>
+            <span>Temperature</span>
             <span>{hvac().targetTemp}&deg;C</span>
           </div>
           <input
@@ -277,7 +277,7 @@ const InlineHomeHVACControl: Component = () => {
         <div class="mt-4">
           <div class="flex items-center gap-2 mb-2">
             <Icon name="air" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-500">模式</span>
+            <span class="text-sm text-gray-500">Mode</span>
           </div>
           <div class="flex gap-2">
             <For each={Object.keys(modeIcons) as HvacMode[]}>
@@ -299,7 +299,7 @@ const InlineHomeHVACControl: Component = () => {
         <div class="mt-4">
           <div class="flex items-center gap-2 mb-2">
             <Icon name="air" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-500">风速</span>
+            <span class="text-sm text-gray-500">Fan Speed</span>
           </div>
           <div class="flex gap-2">
             <For each={Object.keys(fanLabels) as HomeFanSpeed[]}>
@@ -354,7 +354,7 @@ const LightControl: Component<{
       </div>
       <div>
         <div class="font-medium text-gray-800">{props.label}</div>
-        <div class="text-xs text-gray-500">{props.power ? '已开启' : '已关闭'}</div>
+        <div class="text-xs text-gray-500">{props.power ? 'On' : 'Off'}</div>
       </div>
     </div>
     {/* Toggle switch */}
@@ -375,10 +375,10 @@ const LightControl: Component<{
 );
 
 const rooms: Array<{ key: keyof HomeLights; label: string }> = [
-  { key: 'livingRoom', label: '客厅' },
-  { key: 'bedroom', label: '卧室' },
-  { key: 'kitchen', label: '厨房' },
-  { key: 'bathroom', label: '卫生间' },
+  { key: 'livingRoom', label: 'Living Room' },
+  { key: 'bedroom', label: 'Bedroom' },
+  { key: 'kitchen', label: 'Kitchen' },
+  { key: 'bathroom', label: 'Bathroom' },
 ];
 
 const InlineHomeLightingControl: Component = () => {
@@ -390,7 +390,7 @@ const InlineHomeLightingControl: Component = () => {
   return (
     <GlassCard>
       <CardHeader
-        title="灯光控制"
+        title="Lighting"
         icon="light"
         action={
           <div class="flex gap-2">
@@ -398,13 +398,13 @@ const InlineHomeLightingControl: Component = () => {
               variant={allOn() ? 'primary' : 'default'}
               onClick={() => homeStore.setAllLights(true)}
             >
-              全开
+              All On
             </GlassBtn>
             <GlassBtn
               variant={allOff() ? 'default' : 'default'}
               onClick={() => homeStore.setAllLights(false)}
             >
-              全关
+              All Off
             </GlassBtn>
           </div>
         }
@@ -438,7 +438,7 @@ const InlineHomeCurtainControl: Component = () => {
   return (
     <GlassCard>
       <CardHeader
-        title="窗帘控制"
+        title="Curtains"
         icon="curtains"
         action={
           <div class="flex gap-2">
@@ -446,13 +446,13 @@ const InlineHomeCurtainControl: Component = () => {
               variant={isOpen() ? 'primary' : 'default'}
               onClick={() => homeStore.setCurtainPosition(100)}
             >
-              全开
+              All On
             </GlassBtn>
             <GlassBtn
               variant={isClosed() ? 'primary' : 'default'}
               onClick={() => homeStore.setCurtainPosition(0)}
             >
-              全关
+              All Off
             </GlassBtn>
           </div>
         }
@@ -512,14 +512,14 @@ const InlineHomeCurtainControl: Component = () => {
       <div class="text-center mb-4">
         <span class="text-2xl font-bold text-gray-800">{pos()}%</span>
         <span class="text-sm text-gray-500 ml-2">
-          {pos() === 0 ? '已关闭' : pos() === 100 ? '已全开' : '部分打开'}
+          {pos() === 0 ? 'Closed' : pos() === 100 ? 'Fully Open' : 'Partly Open'}
         </span>
       </div>
 
       {/* Position Slider */}
       <div class="mb-1">
         <div class="flex items-center justify-between text-sm text-gray-500 mb-1">
-          <span>开合度</span>
+          <span>Openness</span>
           <span>{pos()}%</span>
         </div>
         <input
@@ -578,7 +578,7 @@ const SmartHome: Component = () => {
       <div class="p-4 md:p-6 lg:p-8">
         {/* Header */}
         <header class="mb-6">
-          <h1 class="text-2xl font-bold tracking-wider text-gray-800">智能家居</h1>
+          <h1 class="text-2xl font-bold tracking-wider text-gray-800">Smart Home</h1>
           <p class="text-sm text-gray-500 mt-1">Smart Home Control System</p>
         </header>
 

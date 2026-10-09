@@ -119,18 +119,18 @@ logger.info(f"Voice mode: {VOICE_MODE}, Realtime-only: {REALTIME_ONLY}")
 SCENE_CONFIGS = {
     "car": {
         "skills_file": "vehicle.yaml",
-        "greeting_instruction": "用中文简短地问候用户，告诉他们你是车载智能助手，可以帮助控制车辆功能。保持自然友好的语气。",
-        "context_hint": "当用户请求控制车辆功能时（如调节空调、控制车窗、调整座椅等），请使用相应的工具来执行操作。",
+        "greeting_instruction": "Briefly greet the user in English and tell them you are the in-car assistant who can help control vehicle features. Keep a natural, friendly tone.",
+        "context_hint": "When the user asks to control vehicle features (such as adjusting the A/C, windows or seats), use the matching tool to perform the action.",
     },
     "home": {
         "skills_file": "home.yaml",
-        "greeting_instruction": "用中文简短地问候用户，告诉他们你是智能家居助手，可以帮助控制家中的智能设备。保持自然友好的语气。",
-        "context_hint": "当用户请求控制智能家居设备时（如调节空调、控制灯光、操作窗帘等），请使用相应的工具来执行操作。",
+        "greeting_instruction": "Briefly greet the user in English and tell them you are the smart home assistant who can help control the smart devices at home. Keep a natural, friendly tone.",
+        "context_hint": "When the user asks to control smart home devices (such as adjusting the A/C, lights or curtains), use the matching tool to perform the action.",
     },
     "charger": {
         "skills_file": "charger.yaml",
-        "greeting_instruction": "用中文简短地问候用户，告诉他们你是充电桩智能助手，可以帮助管理充电相关事务和回答充电问题。保持自然友好的语气。",
-        "context_hint": "当用户请求控制充电桩功能时（如开始/停止充电、设置目标电量、查询充电状态等），请使用相应的工具来执行操作。",
+        "greeting_instruction": "Briefly greet the user in English and tell them you are the EV charger assistant who can help manage charging and answer charging questions. Keep a natural, friendly tone.",
+        "context_hint": "When the user asks to control the charger (such as starting or stopping charging, setting the target charge, or checking the charging status), use the matching tool to perform the action.",
     },
 }
 
@@ -153,7 +153,7 @@ def create_knowledge_base_tool():
     
     kb_id = KB_CONFIG.get("id")
     kb_region = KB_CONFIG.get("region", "us-west-2")
-    kb_description = KB_CONFIG.get("description", "知识库查询")
+    kb_description = KB_CONFIG.get("description", "Knowledge base lookup")
     
     if not kb_id:
         logger.warning("Knowledge base ID not configured, skipping RAG tool creation")
@@ -168,15 +168,15 @@ def create_knowledge_base_tool():
         query: str
     ) -> str:
         f"""
-        搜索知识库获取相关信息。
-        当用户询问以下问题时使用此工具：
+        Search the knowledge base for relevant information.
+        Use this tool when the user asks about:
         {kb_description}
         
         Args:
-            query: 用户的问题或搜索关键词
+            query: The user's question or search keywords
             
         Returns:
-            从知识库检索到的相关答案
+            The relevant answer retrieved from the knowledge base
         """
         nonlocal kb_client
         
@@ -203,23 +203,23 @@ def create_knowledge_base_tool():
                 return result['answer']
             else:
                 logger.warning(f"Knowledge base query returned no results")
-                return "抱歉，我在知识库中没有找到相关信息。请尝试用其他方式描述您的问题。"
+                return "Sorry, I couldn't find anything relevant in the knowledge base. Please try describing your question another way."
                 
         except Exception as e:
             logger.error(f"Knowledge base search failed: {e}")
-            return f"抱歉，查询知识库时遇到了问题。请稍后再试。"
+            return f"Sorry, something went wrong while searching the knowledge base. Please try again later."
     
     # Update the docstring dynamically based on config description
     search_knowledge_base.__doc__ = f"""
-搜索知识库获取相关信息。
-当用户询问以下问题时使用此工具：
+Search the knowledge base for relevant information.
+Use this tool when the user asks about:
 {kb_description}
 
 Args:
-    query: 用户的问题或搜索关键词
+    query: The user's question or search keywords
     
 Returns:
-    从知识库检索到的相关答案
+    The relevant answer retrieved from the knowledge base
 """
     
     logger.info(f"Knowledge base tool created: id={kb_id}, description={kb_description[:50]}...")
@@ -291,7 +291,7 @@ class LLMAgent(Agent):
 {tools_description}
 
 {scene_config['context_hint']}
-执行工具后，用简洁自然的中文告诉用户操作结果。
+After running a tool, tell the user the result in concise, natural English.
 """
         else:
             enhanced_instructions = base_instructions
@@ -300,7 +300,7 @@ class LLMAgent(Agent):
         if enable_handoff_back and VOICE_MODE == "realtime":
             enhanced_instructions += """
 
-当你完成了用户请求的任务后，如果用户没有新的复杂指令，请使用 transfer_to_realtime_agent 工具切换回快速对话模式。
+Once you have finished the user's request, if the user has no new complex instruction, use the transfer_to_realtime_agent tool to switch back to fast conversation mode.
 """
         
         agent_tools = list(tools) if tools else []
@@ -326,22 +326,22 @@ class LLMAgent(Agent):
         @function_tool()
         async def transfer_to_realtime_agent(context: RunContext):
             """
-            切换回实时语音对话模式。
-            当用户的复杂任务已完成，没有更多需要处理的技能调用时，使用此工具切换回快速对话模式。
+            Switch back to realtime voice conversation mode.
+            Use this tool to return to fast conversation mode once the user's complex task is done and no more skill calls are needed.
             """
             logger.info("Handing off from LLMAgent to RealtimeAgent")
             # Return tuple: (new_agent, message_for_llm)
-            return RealtimeVoiceAgent(scene=captured_scene), "好的，已切换回快速对话模式"
+            return RealtimeVoiceAgent(scene=captured_scene), "OK, switched back to fast conversation mode"
         
         return transfer_to_realtime_agent
 
     async def on_enter(self):
         """Called when agent enters the session"""
         logger.info(f"LLMAgent entering session with {self._tools_count} tools for scene: {self._scene}")
-        # 只在首次进入且没有聊天上下文时播放问候语
+        # Only play the greeting on first entry, when there is no chat context yet
         if not self.chat_ctx or len(self.chat_ctx.items) == 0:
-            # 使用 generate_reply 兼容 realtime session (Nova Sonic)
-            # 这样在 handoff 场景下也能正常工作
+            # generate_reply is compatible with the realtime session (Nova Sonic),
+            # so this also works after a handoff
             await self.session.generate_reply(
                 instructions=self._greeting_instruction
             )
@@ -375,12 +375,12 @@ class RealtimeVoiceAgent(Agent):
             # REALTIME_ONLY mode: Nova Sonic handles everything directly
             instructions = f"""{config["agent"]["instructions"]}
 
-你是一个实时语音助手，可以直接处理所有用户请求。
+You are a realtime voice assistant that can handle every user request directly.
 
 {tools_description}
 
 {scene_config['context_hint']}
-执行工具后，用简洁自然的中文告诉用户操作结果。
+After running a tool, tell the user the result in concise, natural English.
 """
             agent_tools = list(tools) if tools else []
             logger.info(f"RealtimeOnlyAgent: Nova Sonic with {len(agent_tools)} tools (no handoff)")
@@ -388,18 +388,18 @@ class RealtimeVoiceAgent(Agent):
             # Normal realtime mode: use LLM sub-call for complex tasks
             instructions = f"""{config["agent"]["instructions"]}
 
-你是一个实时语音助手，擅长快速、自然的对话。
+You are a realtime voice assistant who is good at fast, natural conversation.
 
-当用户需要执行以下操作时，请使用 process_with_llm 工具来处理：
-- 控制车辆/设备功能（空调、车窗、座椅、灯光等）
-- 查询手册或知识库
-- 执行需要多步骤的复杂任务
+Use the process_with_llm tool when the user needs to:
+- Control vehicle or device features (A/C, windows, seats, lights, and so on)
+- Look something up in the manual or knowledge base
+- Perform a complex, multi-step task
 
-使用 process_with_llm 时：
-- task_description: 简要描述任务类型
-- user_request: 用户的原始请求
+When calling process_with_llm:
+- task_description: a short description of the task type
+- user_request: the user's original request
 
-工具会返回处理结果，你需要将结果自然地告诉用户。
+The tool returns the result; relay it to the user naturally.
 """
             # Create LLM sub-call tool
             llm_tool = self._create_handoff_to_llm_tool(scene)
@@ -437,19 +437,19 @@ class RealtimeVoiceAgent(Agent):
             user_request: str = ""
         ) -> str:
             """
-            使用高级语言模型处理复杂任务。
-            当需要执行以下操作时使用此工具：
-            - 控制车辆功能（空调、车窗、座椅、灯光等）
-            - 查询车辆手册或知识库
-            - 执行需要多步骤的复杂任务
-            - 需要更精确推理的场景
+            Handle complex tasks with a more capable language model.
+            Use this tool to:
+            - Control vehicle features (A/C, windows, seats, lights, and so on)
+            - Look something up in the vehicle manual or knowledge base
+            - Perform a complex, multi-step task
+            - Handle cases that need more precise reasoning
             
             Args:
-                task_description: 简要描述用户想要完成的任务
-                user_request: 用户的原始请求内容
+                task_description: A short description of what the user wants to do
+                user_request: The user's original request
             
             Returns:
-                处理结果的文本描述，将由语音助手朗读给用户
+                A text description of the result, read aloud to the user by the voice assistant
             """
             logger.info(f"Processing with LLM: {task_description}, request: {user_request}")
             
@@ -537,10 +537,10 @@ class RealtimeVoiceAgent(Agent):
                         "role": "system",
                         "content": f"""{config["agent"]["instructions"]}
 
-你是一个智能助手，需要根据用户请求调用合适的工具来执行操作。
+You are an assistant that calls the right tool to carry out the user's request.
 {scene_config['context_hint']}
-分析用户请求，选择合适的工具并提供正确的参数。
-必须调用工具来执行操作，不要只是描述你会做什么。"""
+Analyze the request, choose the right tool and provide the correct parameters.
+You must call a tool to perform the action; do not just describe what you would do."""
                     },
                     {"role": "user", "content": current_request}
                 ]
@@ -612,31 +612,31 @@ class RealtimeVoiceAgent(Agent):
                                     if isinstance(dispatch_result, dict):
                                         response_data.update(dispatch_result.get('data', {}))
                                     
-                                    response_template = skill.responses.get('success', '操作完成')
+                                    response_template = skill.responses.get('success', 'Done')
                                     response = render_response(response_template, response_data)
                                     results.append(response)
                                     logger.info(f"Tool {tool_name} result: {response}")
                                 except Exception as e:
                                     logger.error(f"Tool {tool_name} failed: {e}")
-                                    results.append(skill.responses.get('error', '操作失败'))
+                                    results.append(skill.responses.get('error', 'The action failed'))
                                 break
                     
-                    return " ".join(results) if results else "操作完成"
+                    return " ".join(results) if results else "Done"
                 else:
                     # No tool call, return LLM's text response
-                    return response_text if response_text else "任务处理完成"
+                    return response_text if response_text else "Task completed"
                 
             except Exception as e:
                 logger.error(f"LLM sub-call failed: {e}", exc_info=True)
-                return f"抱歉，处理任务时遇到了问题"
+                return "Sorry, something went wrong while handling that task"
         
         return process_with_llm
 
     async def on_enter(self):
         """Called when agent enters the session"""
         logger.info(f"RealtimeVoiceAgent entering session for scene: {self._scene}")
-        # 使用 generate_reply 让模型自然生成问候语
-        # 这与 Nova Sonic RealtimeModel 兼容，不需要独立的 TTS
+        # Let the model generate the greeting with generate_reply;
+        # this works with the Nova Sonic RealtimeModel without a separate TTS
         await self.session.generate_reply(
             instructions=self._greeting_instruction
         )
@@ -794,8 +794,8 @@ async def load_skills_and_tools(room: rtc.Room, scene: str = "car") -> tuple[Lis
             rag_tool = create_knowledge_base_tool()
             if rag_tool:
                 tools.append(rag_tool)
-                kb_desc = KB_CONFIG.get("description", "知识库查询")
-                tools_description += f"\n\n- search_knowledge_base: 搜索知识库获取相关信息。适用于：{kb_desc}"
+                kb_desc = KB_CONFIG.get("description", "Knowledge base lookup")
+                tools_description += f"\n\n- search_knowledge_base: Search the knowledge base for relevant information. Use for: {kb_desc}"
                 logger.info(f"Added RAG tool, total tools: {len(tools)}")
         
         return tools, tools_description

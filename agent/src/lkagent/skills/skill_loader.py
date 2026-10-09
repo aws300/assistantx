@@ -239,7 +239,7 @@ class SkillLoader:
         if not self.config:
             return ""
         
-        lines = [f"# {self.config.device_name} 可用技能\n"]
+        lines = [f"# {self.config.device_name} Available Skills\n"]
         
         for category in self.config.categories:
             cat_id = category.get('id', '')
@@ -251,6 +251,6 @@ class SkillLoader:
                 for skill in skills:
                     lines.append(f"- **{skill.name}**: {skill.description}")
                     if skill.triggers:
-                        lines.append(f"  示例: {skill.triggers[0]}")
+                        lines.append(f"  Example: {skill.triggers[0]}")
         
         return "\n".join(lines)

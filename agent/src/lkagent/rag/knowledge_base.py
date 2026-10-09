@@ -147,7 +147,7 @@ class KnowledgeBaseClient:
             logger.error(f"Knowledge Base query failed: {e}")
             return {
                 'success': False,
-                'answer': f"查询知识库失败: {str(e)}",
+                'answer': f"Knowledge base query failed: {str(e)}",
                 'sources': []
             }
     

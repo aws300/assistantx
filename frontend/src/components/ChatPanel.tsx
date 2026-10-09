@@ -16,8 +16,8 @@
  * Right-side floating overlay for LiveKit voice and text chat.
  *
  * States:
- *   - Collapsed: small bar with icon + "语音助手" + connection status + chevron
- *   - Expanded (idle): audio icon animation, "点击下方按钮开始对话", "开始对话" button
+ *   - Collapsed: small bar with icon + "Voice Assistant" + connection status + chevron
+ *   - Expanded (idle): audio icon animation, "Tap the button below to start a conversation", "Start Conversation" button
  *   - Expanded (connected): transcription messages, text input, mic/speaker/disconnect controls
  */
 
@@ -135,19 +135,19 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
 
   // -- Status helpers --
   const statusLabel = () => {
-    if (isConnecting()) return '连接中...';
-    if (isConnected()) return '已连接';
-    return '未连接';
+    if (isConnecting()) return 'Connecting...';
+    if (isConnected()) return 'Connected';
+    return 'Disconnected';
   };
 
   const agentStatusText = () => {
     switch (agentStatus()) {
       case 'listening':
-        return '正在听...';
+        return 'Listening...';
       case 'thinking':
-        return '思考中...';
+        return 'Thinking...';
       case 'speaking':
-        return '回复中...';
+        return 'Responding...';
       default:
         return '';
     }
@@ -424,7 +424,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
               props.dark ? 'text-white/90' : 'text-gray-800',
             )}
           >
-            语音助手
+            Voice Assistant
           </span>
           <span
             class={cn(
@@ -494,7 +494,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                       props.dark ? 'text-white/60' : 'text-gray-600',
                     )}
                   >
-                    开始对话
+                    Start Conversation
                   </p>
                   <p
                     class={cn(
@@ -502,7 +502,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                       props.dark ? 'text-white/30' : 'text-gray-400',
                     )}
                   >
-                    说话或输入文字
+                    Speak or type a message
                   </p>
                 </div>
               }
@@ -548,10 +548,10 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                 )}
                 placeholder={
                   agentStatus() === 'listening'
-                    ? '正在聆听...'
+                    ? 'Listening...'
                     : agentStatus() === 'speaking'
-                      ? '助手回复中...'
-                      : '输入消息...'
+                      ? 'Assistant is responding...'
+                      : 'Type a message...'
                 }
                 value={textInput()}
                 onInput={(e) => setTextInput(e.currentTarget.value)}
@@ -590,7 +590,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                         : 'bg-white/60 text-gray-500 border-gray-200/50 hover:bg-white/80',
                   )}
                   onClick={toggleMic}
-                  title={isMicOn() ? '静音' : '取消静音'}
+                  title={isMicOn() ? 'Mute' : 'Unmute'}
                 >
                   <Icon name={isMicOn() ? 'mic' : 'mic_off'} size="sm" />
                 </button>
@@ -609,7 +609,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                         : 'bg-amber-50/80 text-amber-600 border-amber-200/50',
                   )}
                   onClick={toggleSpeaker}
-                  title={isSpeakerOn() ? '静音扬声器' : '取消静音扬声器'}
+                  title={isSpeakerOn() ? 'Mute speaker' : 'Unmute speaker'}
                 >
                   <Icon name={isSpeakerOn() ? 'volume_up' : 'volume_off'} size="sm" />
                 </button>
@@ -622,7 +622,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                   props.dark ? 'text-white/40' : 'text-gray-400',
                 )}
               >
-                {agentStatusText() || '就绪'}
+                {agentStatusText() || 'Ready'}
               </span>
 
               {/* Disconnect button - red glass */}
@@ -633,7 +633,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                   'hover:bg-red-600/90',
                 )}
                 onClick={disconnect}
-                title="断开连接"
+                title="Disconnect"
               >
                 <Icon name="call_end" size="sm" />
               </button>
@@ -669,7 +669,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                 props.dark ? 'text-white/80' : 'text-gray-600',
               )}
             >
-              语音助手
+              Voice Assistant
             </p>
             <p
               class={cn(
@@ -677,7 +677,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                 props.dark ? 'text-white/40' : 'text-gray-400',
               )}
             >
-              点击下方按钮开始对话
+              Tap the button below to start a conversation
             </p>
 
             <button
@@ -697,7 +697,7 @@ const ChatPanel: Component<ChatPanelProps> = (rawProps) => {
                 size="sm"
                 class={isConnecting() ? 'animate-pulse' : ''}
               />
-              {isConnecting() ? '连接中...' : '开始对话'}
+              {isConnecting() ? 'Connecting...' : 'Start Conversation'}
             </button>
 
             <Show when={error()}>

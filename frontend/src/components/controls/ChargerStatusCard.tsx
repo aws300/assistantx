@@ -17,10 +17,10 @@ import { Icon } from '@/components/ui/Icon';
 import { chargerStore } from '@/stores/chargerStore';
 
 const statusLabels: Record<string, string> = {
-  charging: '充电中',
-  idle: '空闲',
-  paused: '已暂停',
-  completed: '已完成',
+  charging: 'Charging',
+  idle: 'Idle',
+  paused: 'Paused',
+  completed: 'Completed',
 };
 
 const statusColorClass: Record<string, string> = {
@@ -42,7 +42,7 @@ export const ChargerStatusCard: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="ev_station" size="sm" class="text-green-600" />
-        <span class="text-sm font-semibold text-gray-700">充电状态</span>
+        <span class="text-sm font-semibold text-gray-700">Charging Status</span>
       </div>
 
       {/* Status Badge and Power */}
@@ -65,7 +65,7 @@ export const ChargerStatusCard: Component = () => {
             {chargerStore.state.electrical.power}
             <span class="text-lg ml-1">kW</span>
           </div>
-          <div class="text-xs text-gray-500">实时功率</div>
+          <div class="text-xs text-gray-500">Live Power</div>
         </div>
       </div>
 
@@ -74,7 +74,7 @@ export const ChargerStatusCard: Component = () => {
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-2">
             <Icon name="battery_charging_full" size="sm" class="text-green-600" />
-            <span class="text-sm font-medium text-gray-700">电池电量</span>
+            <span class="text-sm font-medium text-gray-700">Battery Level</span>
           </div>
           <div class="text-sm">
             <span class="font-bold text-gray-800">{chargerStore.state.status.soc}%</span>
@@ -94,7 +94,7 @@ export const ChargerStatusCard: Component = () => {
         </div>
         <div class="flex justify-between mt-1 text-xs text-gray-500">
           <span>0%</span>
-          <span>目标: {chargerStore.state.status.targetSoc}%</span>
+          <span>Target: {chargerStore.state.status.targetSoc}%</span>
           <span>100%</span>
         </div>
       </div>
@@ -108,10 +108,10 @@ export const ChargerStatusCard: Component = () => {
           <div>
             <div class="text-lg font-bold text-gray-800">
               {chargerStore.state.battery.estimatedTime > 0
-                ? `${chargerStore.state.battery.estimatedTime}分钟`
+                ? `${chargerStore.state.battery.estimatedTime} min`
                 : '--'}
             </div>
-            <div class="text-xs text-gray-500">预计剩余</div>
+            <div class="text-xs text-gray-500">Time Left</div>
           </div>
         </div>
 
@@ -123,15 +123,15 @@ export const ChargerStatusCard: Component = () => {
             <div class="text-lg font-bold text-gray-800">
               ¥{chargerStore.state.billing.currentCost.toFixed(1)}
             </div>
-            <div class="text-xs text-gray-500">当前费用</div>
+            <div class="text-xs text-gray-500">Current Cost</div>
           </div>
         </div>
       </div>
 
       {/* Charging Info */}
       <div class="flex items-center justify-between text-sm text-gray-600 mb-4 px-1">
-        <span>已充 {chargerStore.state.electrical.totalEnergy.toFixed(1)} kWh</span>
-        <span>电价 ¥{chargerStore.state.billing.rate}/kWh</span>
+        <span>Charged {chargerStore.state.electrical.totalEnergy.toFixed(1)} kWh</span>
+        <span>Rate ¥{chargerStore.state.billing.rate}/kWh</span>
       </div>
 
       {/* Control Buttons */}
@@ -142,7 +142,7 @@ export const ChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors"
           >
             <Icon name="play_arrow" size="sm" />
-            开始充电
+            Start Charging
           </button>
         </Show>
 
@@ -152,14 +152,14 @@ export const ChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors"
           >
             <Icon name="pause" size="sm" />
-            暂停
+            Pause
           </button>
           <button
             onClick={() => chargerStore.stopCharging()}
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
           >
             <Icon name="stop" size="sm" />
-            停止
+            Stop
           </button>
         </Show>
 
@@ -169,14 +169,14 @@ export const ChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors"
           >
             <Icon name="play_arrow" size="sm" />
-            继续
+            Resume
           </button>
           <button
             onClick={() => chargerStore.stopCharging()}
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
           >
             <Icon name="stop" size="sm" />
-            停止
+            Stop
           </button>
         </Show>
       </div>

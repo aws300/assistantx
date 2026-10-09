@@ -67,10 +67,10 @@ const CardHeader: Component<{
 // ---------------------------------------------------------------------------
 
 const statusDisplayNames: Record<ChargingStatus, string> = {
-  charging: '充电中',
-  idle: '空闲',
-  paused: '已暂停',
-  completed: '已完成',
+  charging: 'Charging',
+  idle: 'Idle',
+  paused: 'Paused',
+  completed: 'Completed',
 };
 
 const statusColors: Record<ChargingStatus, string> = {
@@ -97,7 +97,7 @@ const InlineChargerStatusCard: Component = () => {
 
   return (
     <GlassCard>
-      <CardHeader title="充电状态" icon="bolt" />
+      <CardHeader title="Charging Status" icon="bolt" />
 
       {/* Status Badge and Power */}
       <div class="flex items-center justify-between mb-4">
@@ -118,7 +118,7 @@ const InlineChargerStatusCard: Component = () => {
           <div class="text-3xl font-bold text-primary">
             {elec().power}<span class="text-lg ml-1">kW</span>
           </div>
-          <div class="text-xs text-gray-500">实时功率</div>
+          <div class="text-xs text-gray-500">Live Power</div>
         </div>
       </div>
 
@@ -127,7 +127,7 @@ const InlineChargerStatusCard: Component = () => {
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-2">
             <Icon name="battery_charging_full" size="sm" class="text-green-600" />
-            <span class="text-sm font-medium text-gray-700">电池电量</span>
+            <span class="text-sm font-medium text-gray-700">Battery Level</span>
           </div>
           <div class="text-sm">
             <span class="font-bold text-gray-800">{st().soc}%</span>
@@ -147,7 +147,7 @@ const InlineChargerStatusCard: Component = () => {
         </div>
         <div class="flex justify-between mt-1 text-xs text-gray-500">
           <span>0%</span>
-          <span>目标: {st().targetSoc}%</span>
+          <span>Target: {st().targetSoc}%</span>
           <span>100%</span>
         </div>
       </div>
@@ -160,9 +160,9 @@ const InlineChargerStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">
-              {bat().estimatedTime > 0 ? `${bat().estimatedTime}分钟` : '--'}
+              {bat().estimatedTime > 0 ? `${bat().estimatedTime} min` : '--'}
             </div>
-            <div class="text-xs text-gray-500">预计剩余</div>
+            <div class="text-xs text-gray-500">Time Left</div>
           </div>
         </div>
 
@@ -172,15 +172,15 @@ const InlineChargerStatusCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">&yen;{bill().currentCost.toFixed(1)}</div>
-            <div class="text-xs text-gray-500">当前费用</div>
+            <div class="text-xs text-gray-500">Current Cost</div>
           </div>
         </div>
       </div>
 
       {/* Charging Info */}
       <div class="flex items-center justify-between text-sm text-gray-600 mb-4 px-1">
-        <span>已充 {elec().totalEnergy.toFixed(1)} kWh</span>
-        <span>电价 &yen;{bill().rate}/kWh</span>
+        <span>Charged {elec().totalEnergy.toFixed(1)} kWh</span>
+        <span>Rate &yen;{bill().rate}/kWh</span>
       </div>
 
       {/* Control Buttons */}
@@ -191,7 +191,7 @@ const InlineChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors cursor-pointer"
           >
             <Icon name="play_arrow" size="sm" />
-            开始充电
+            Start Charging
           </button>
         </Show>
 
@@ -201,14 +201,14 @@ const InlineChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors cursor-pointer"
           >
             <Icon name="pause" size="sm" />
-            暂停
+            Pause
           </button>
           <button
             onClick={() => chargerStore.stopCharging()}
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors cursor-pointer"
           >
             <Icon name="stop" size="sm" />
-            停止
+            Stop
           </button>
         </Show>
 
@@ -218,14 +218,14 @@ const InlineChargerStatusCard: Component = () => {
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors cursor-pointer"
           >
             <Icon name="play_arrow" size="sm" />
-            继续
+            Resume
           </button>
           <button
             onClick={() => chargerStore.stopCharging()}
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors cursor-pointer"
           >
             <Icon name="stop" size="sm" />
-            停止
+            Stop
           </button>
         </Show>
       </div>
@@ -245,13 +245,13 @@ const InlineChargingDataCard: Component = () => {
 
   return (
     <GlassCard>
-      <CardHeader title="电气运行数据" icon="monitoring" />
+      <CardHeader title="Electrical Data" icon="monitoring" />
 
       {/* Power Gauge */}
       <div class="mb-4">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-700">实时功率</span>
-          <span class="text-sm text-gray-500">最大 {maxPower} kW</span>
+          <span class="text-sm font-medium text-gray-700">Live Power</span>
+          <span class="text-sm text-gray-500">Max {maxPower} kW</span>
         </div>
         <div class="relative h-3 bg-gray-200 rounded-full overflow-hidden">
           <div
@@ -269,11 +269,11 @@ const InlineChargingDataCard: Component = () => {
       <div class="grid grid-cols-2 gap-4 mb-4">
         {/* Voltage */}
         <div class="space-y-3">
-          <div class="text-xs font-medium text-gray-500 uppercase tracking-wider">电压</div>
+          <div class="text-xs font-medium text-gray-500 uppercase tracking-wider">Voltage</div>
           <div class="p-3 rounded-lg bg-purple-50">
             <div class="flex items-center gap-2 mb-1">
               <Icon name="speed" size="xs" class="text-purple-600" />
-              <span class="text-xs text-gray-600">电压</span>
+              <span class="text-xs text-gray-600">Voltage</span>
             </div>
             <div class="text-xl font-bold text-gray-800">{elec().voltage} V</div>
           </div>
@@ -281,11 +281,11 @@ const InlineChargingDataCard: Component = () => {
 
         {/* Current */}
         <div class="space-y-3">
-          <div class="text-xs font-medium text-gray-500 uppercase tracking-wider">电流</div>
+          <div class="text-xs font-medium text-gray-500 uppercase tracking-wider">Current</div>
           <div class="p-3 rounded-lg bg-green-50">
             <div class="flex items-center gap-2 mb-1">
               <Icon name="bolt" size="xs" class="text-green-600" />
-              <span class="text-xs text-gray-600">电流</span>
+              <span class="text-xs text-gray-600">Current</span>
             </div>
             <div class="text-xl font-bold text-gray-800">{elec().current} A</div>
           </div>
@@ -300,7 +300,7 @@ const InlineChargingDataCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{elec().totalEnergy.toFixed(1)}</div>
-            <div class="text-xs text-gray-500">累计电量 kWh</div>
+            <div class="text-xs text-gray-500">Total Energy kWh</div>
           </div>
         </div>
 
@@ -310,7 +310,7 @@ const InlineChargingDataCard: Component = () => {
           </div>
           <div>
             <div class="text-lg font-bold text-gray-800">{elec().power.toFixed(1)}</div>
-            <div class="text-xs text-gray-500">功率 kW</div>
+            <div class="text-xs text-gray-500">Power kW</div>
           </div>
         </div>
       </div>
@@ -366,7 +366,7 @@ const TempItem: Component<{
       </div>
       <div class="flex justify-between mt-1 text-xs text-gray-400">
         <span>0&deg;C</span>
-        <span>安全阈值 {props.maxSafe}&deg;C</span>
+        <span>Safe limit {props.maxSafe}&deg;C</span>
       </div>
     </div>
   );
@@ -377,19 +377,19 @@ const InlineEnvironmentCard: Component = () => {
 
   return (
     <GlassCard>
-      <CardHeader title="温度监测" icon="thermostat" />
+      <CardHeader title="Temperature Monitor" icon="thermostat" />
 
       <div class="space-y-4">
-        <TempItem icon="thermostat" label="枪头温度" value={temp().connector} maxSafe={85} />
-        <TempItem icon="memory" label="模块温度" value={temp().module} maxSafe={70} />
-        <TempItem icon="wb_sunny" label="环境温度" value={temp().ambient} maxSafe={45} />
+        <TempItem icon="thermostat" label="Connector" value={temp().connector} maxSafe={85} />
+        <TempItem icon="memory" label="Module" value={temp().module} maxSafe={70} />
+        <TempItem icon="wb_sunny" label="Ambient" value={temp().ambient} maxSafe={45} />
       </div>
 
       {/* Temperature Summary */}
       <div class="mt-4 p-3 rounded-lg bg-primary/5">
         <div class="flex items-center justify-between text-sm">
-          <span class="text-gray-600">系统散热状态</span>
-          <span class="font-medium text-green-600">正常</span>
+          <span class="text-gray-600">Cooling System</span>
+          <span class="font-medium text-green-600">Normal</span>
         </div>
       </div>
     </GlassCard>
@@ -423,7 +423,7 @@ const Charger: Component = () => {
       <div class="p-4 md:p-6 lg:p-8">
         {/* Header */}
         <header class="mb-6">
-          <h1 class="text-2xl font-bold tracking-wider text-gray-800">智能充电桩</h1>
+          <h1 class="text-2xl font-bold tracking-wider text-gray-800">Smart EV Charger</h1>
           <p class="text-sm text-gray-500 mt-1">Smart EV Charger System</p>
         </header>
 

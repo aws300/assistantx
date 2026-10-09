@@ -17,14 +17,14 @@ import { Icon } from '@/components/ui/Icon';
 import { vehicleStore } from '@/stores/vehicleStore';
 
 const AMBIENT_COLORS = [
-  { color: '#3B82F6', name: '蓝' },
-  { color: '#EF4444', name: '红' },
-  { color: '#22C55E', name: '绿' },
-  { color: '#F97316', name: '橙' },
-  { color: '#A855F7', name: '紫' },
-  { color: '#EC4899', name: '粉' },
-  { color: '#06B6D4', name: '青' },
-  { color: '#6B7280', name: '白' },
+  { color: '#3B82F6', name: 'Blue' },
+  { color: '#EF4444', name: 'Red' },
+  { color: '#22C55E', name: 'Green' },
+  { color: '#F97316', name: 'Orange' },
+  { color: '#A855F7', name: 'Purple' },
+  { color: '#EC4899', name: 'Pink' },
+  { color: '#06B6D4', name: 'Cyan' },
+  { color: '#6B7280', name: 'White' },
 ];
 
 export const LightingControl: Component = () => {
@@ -33,7 +33,7 @@ export const LightingControl: Component = () => {
       {/* Header */}
       <div class="flex items-center gap-2 mb-4">
         <Icon name="light" size="sm" class="text-yellow-600" />
-        <span class="text-sm font-semibold text-gray-700">灯光控制</span>
+        <span class="text-sm font-semibold text-gray-700">Lighting</span>
       </div>
 
       {/* Interior Light Toggle + Brightness */}
@@ -41,7 +41,7 @@ export const LightingControl: Component = () => {
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-2">
             <Icon name="wb_sunny" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-600">车内灯</span>
+            <span class="text-sm text-gray-600">Interior Light</span>
           </div>
           <button
             class={cn(
@@ -85,7 +85,7 @@ export const LightingControl: Component = () => {
                 'box-shadow': `0 0 10px ${vehicleStore.state.lighting.ambient.color}`,
               }}
             />
-            <span class="text-sm text-gray-600">氛围灯</span>
+            <span class="text-sm text-gray-600">Ambient Light</span>
           </div>
           <span class="text-xs text-gray-500">{vehicleStore.state.lighting.ambient.brightness}%</span>
         </div>
@@ -137,7 +137,7 @@ export const LightingControl: Component = () => {
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <Icon name="menu_book" size="xs" class="text-gray-500" />
-            <span class="text-sm text-gray-600">阅读灯</span>
+            <span class="text-sm text-gray-600">Reading Light</span>
           </div>
           <button
             class={cn(

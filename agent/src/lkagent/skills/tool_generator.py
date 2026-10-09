@@ -138,14 +138,14 @@ def render_response(template: str, data: Dict[str, Any]) -> str:
 
 # Color name mapping for ambient light
 COLOR_MAP = {
-    "蓝色": "#3B82F6", "蓝": "#3B82F6", "blue": "#3B82F6",
-    "红色": "#EF4444", "红": "#EF4444", "red": "#EF4444",
-    "绿色": "#22C55E", "绿": "#22C55E", "green": "#22C55E",
-    "橙色": "#F97316", "橙": "#F97316", "orange": "#F97316",
-    "紫色": "#A855F7", "紫": "#A855F7", "purple": "#A855F7",
-    "粉色": "#EC4899", "粉": "#EC4899", "pink": "#EC4899",
-    "白色": "#FFFFFF", "白": "#FFFFFF", "white": "#FFFFFF",
-    "黄色": "#FCD34D", "黄": "#FCD34D", "yellow": "#FCD34D",
+    "blue": "#3B82F6",
+    "red": "#EF4444",
+    "green": "#22C55E",
+    "orange": "#F97316",
+    "purple": "#A855F7",
+    "pink": "#EC4899",
+    "white": "#FFFFFF",
+    "yellow": "#FCD34D",
 }
 
 
@@ -183,7 +183,7 @@ class ToolGenerator:
                     value = raw_arguments[param.name]
                     
                     # Handle case where LLM returns complex option object instead of simple value
-                    # e.g., {'value': 'bedroom', 'aliases': ['卧室']} -> 'bedroom'
+                    # e.g., {'value': 'bedroom', 'aliases': ['bedroom']} -> 'bedroom'
                     if isinstance(value, dict) and 'value' in value:
                         value = value['value']
                     # Handle case where value is a string representation of dict
@@ -201,7 +201,7 @@ class ToolGenerator:
                     
                     # Handle color mapping for ambient light
                     if param.name == 'color' and isinstance(value, str):
-                        value = COLOR_MAP.get(value, value)
+                        value = COLOR_MAP.get(value.strip().lower(), value)
                     final_params[param.name] = value
                 elif param.default is not None:
                     final_params[param.name] = param.default
@@ -224,7 +224,7 @@ class ToolGenerator:
                 if isinstance(result, dict):
                     response_data.update(result.get('data', {}))
                 
-                response_template = captured_skill.responses.get('success', '操作完成')
+                response_template = captured_skill.responses.get('success', 'Done')
                 response = render_response(response_template, response_data)
                 
                 logger.info(f"Tool {captured_skill.id} response: {response}")
@@ -232,7 +232,7 @@ class ToolGenerator:
                 
             except Exception as e:
                 logger.error(f"Tool {captured_skill.id} execution failed: {e}")
-                return captured_skill.responses.get('error', '操作失败，请重试')
+                return captured_skill.responses.get('error', 'The action failed, please try again')
         
         return tool_handler
     
@@ -271,7 +271,7 @@ class ToolGenerator:
     
     def get_tools_description(self) -> str:
         """Get formatted description of all tools for LLM system prompt"""
-        lines = [f"# {self.config.device_name} 可用控制功能\n"]
+        lines = [f"# {self.config.device_name} Available Controls\n"]
         
         categories = {}
         for skill in self.config.skills:

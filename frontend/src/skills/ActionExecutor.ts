@@ -155,7 +155,7 @@ export function registerCarActions() {
   registerAction('windows.control', (params) => {
     const { window: winName, action, position } = params;
     const idx = vs.state.windows.findIndex((w) => w.name === winName);
-    if (idx === -1 && (winName === 'all' || winName === '所有')) {
+    if (idx === -1 && (winName === 'all')) {
       const pos = action === 'open' ? 100 : action === 'close' ? 0 : Number(position) || 0;
       vs.setAllWindows(pos);
     } else if (idx >= 0) {
@@ -267,14 +267,11 @@ export function registerHomeActions() {
   const roomMap: Record<string, keyof HomeLights> = {
     livingRoom: 'livingRoom',
     living_room: 'livingRoom',
-    '\u5BA2\u5385': 'livingRoom',
+    'living room': 'livingRoom',
     bedroom: 'bedroom',
-    '\u5367\u5BA4': 'bedroom',
     kitchen: 'kitchen',
-    '\u53A8\u623F': 'kitchen',
     bathroom: 'bathroom',
-    '\u536B\u751F\u95F4': 'bathroom',
-    '\u6D17\u624B\u95F4': 'bathroom',
+    restroom: 'bathroom',
   };
 
   // -- HVAC --
@@ -321,7 +318,7 @@ export function registerHomeActions() {
   registerAction('lighting.control', (params) => {
     const { room, action } = params;
     const power = action === 'on';
-    if (room === 'all' || room === '\u6240\u6709' || room === '\u5168\u90E8') {
+    if (room === 'all') {
       hs.setAllLights(power);
       return { success: true, data: { room: 'all', action } };
     }
@@ -337,9 +334,9 @@ export function registerHomeActions() {
   // -- Curtain --
   registerAction('curtain.control', (params) => {
     const { action, position } = params;
-    if (action === 'open' || action === '\u6253\u5F00' || action === '\u62C9\u5F00') {
+    if (action === 'open') {
       hs.setCurtainPosition(position != null ? Number(position) : 100);
-    } else if (action === 'close' || action === '\u5173\u95ED' || action === '\u62C9\u4E0A') {
+    } else if (action === 'close') {
       hs.setCurtainPosition(0);
     } else if (position != null) {
       hs.setCurtainPosition(Number(position));

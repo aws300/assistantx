@@ -17,20 +17,34 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/metadata"
 	"github.com/ti/common-go/grpcmux"
+	"github.com/ti/common-go/log"
 
 	"github.com/assistantx/backend/internal/dependencies/oidc"
 	authv1 "github.com/assistantx/backend/pkg/pb/auth/v1"
 	"github.com/assistantx/backend/pkg/pb/auth/v1/authv1connect"
 )
+
+// tokenClient talks to the IdP token endpoint. It has a timeout so a slow IdP
+// cannot pin request goroutines open indefinitely.
+var tokenClient = &http.Client{Timeout: 10 * time.Second}
+
+// oauthErrorPattern matches RFC 6749 error codes such as "invalid_grant".
+var oauthErrorPattern = regexp.MustCompile(`^[a-z_]{1,64}$`)
+
+// maxTokenResponseBytes caps the IdP token response read into memory.
+const maxTokenResponseBytes = 1 << 20
 
 // AuthServer implements the ConnectRPC AuthService.
 type AuthServer struct {
@@ -62,7 +76,7 @@ func (s *AuthServer) GetUserInfo(
 
 	claims, err := s.provider.ValidateToken(token)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnauthenticated, err)
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid token"))
 	}
 
 	return connect.NewResponse(&authv1.UserInfo{
@@ -133,19 +147,35 @@ func (s *AuthServer) Token(
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", disc.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("build token request: %w", err))
+		log.Action("AuthToken").Error("build token request: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, errors.New("token exchange failed"))
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	httpResp, err := http.DefaultClient.Do(httpReq)
+	httpResp, err := tokenClient.Do(httpReq)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		log.Action("AuthToken").Error("call token endpoint: %v", err)
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("token exchange failed"))
 	}
 	defer httpResp.Body.Close()
 
-	body, _ := io.ReadAll(httpResp.Body)
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxTokenResponseBytes))
+	if err != nil {
+		log.Action("AuthToken").Error("read token response: %v", err)
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("token exchange failed"))
+	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("token endpoint: %s", string(body)))
+		// Only the OAuth error code goes back to the client; the IdP's full
+		// response stays in the server log.
+		log.Action("AuthToken").Warn("token endpoint status %d: %s", httpResp.StatusCode, body)
+		var oauthErr struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &oauthErr)
+		if !oauthErrorPattern.MatchString(oauthErr.Error) {
+			oauthErr.Error = "token_exchange_failed"
+		}
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New(oauthErr.Error))
 	}
 
 	var tokenResp struct {
@@ -157,7 +187,8 @@ func (s *AuthServer) Token(
 		Sub          string `json:"sub"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode token response: %w", err))
+		log.Action("AuthToken").Error("decode token response: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, errors.New("token exchange failed"))
 	}
 
 	return connect.NewResponse(&authv1.TokenResponse{

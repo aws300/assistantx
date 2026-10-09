@@ -17,10 +17,10 @@ import { Icon } from '@/components/ui/Icon';
 import { homeStore, HomeLights } from '@/stores/homeStore';
 
 const rooms: { key: keyof HomeLights; label: string }[] = [
-  { key: 'livingRoom', label: '客厅' },
-  { key: 'bedroom', label: '卧室' },
-  { key: 'kitchen', label: '厨房' },
-  { key: 'bathroom', label: '卫生间' },
+  { key: 'livingRoom', label: 'Living Room' },
+  { key: 'bedroom', label: 'Bedroom' },
+  { key: 'kitchen', label: 'Kitchen' },
+  { key: 'bathroom', label: 'Bathroom' },
 ];
 
 interface LightItemProps {
@@ -56,7 +56,7 @@ const LightItem: Component<LightItemProps> = (props) => {
         </div>
         <div>
           <div class="font-medium text-gray-800">{props.label}</div>
-          <div class="text-xs text-gray-500">{props.power ? '已开启' : '已关闭'}</div>
+          <div class="text-xs text-gray-500">{props.power ? 'On' : 'Off'}</div>
         </div>
       </div>
       <div
@@ -86,7 +86,7 @@ export const HomeLightingControl: Component = () => {
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <Icon name="lightbulb" size="sm" class="text-yellow-600" />
-          <span class="text-sm font-semibold text-gray-700">灯光控制</span>
+          <span class="text-sm font-semibold text-gray-700">Lighting</span>
         </div>
         <div class="flex gap-2">
           <button
@@ -98,7 +98,7 @@ export const HomeLightingControl: Component = () => {
             )}
             onClick={() => homeStore.setAllLights(true)}
           >
-            全开
+            All On
           </button>
           <button
             class={cn(
@@ -109,7 +109,7 @@ export const HomeLightingControl: Component = () => {
             )}
             onClick={() => homeStore.setAllLights(false)}
           >
-            全关
+            All Off
           </button>
         </div>
       </div>

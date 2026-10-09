@@ -28,13 +28,13 @@ The user talks to the assistant; the agent calls **function tools** generated fr
 
 ![AssistantX landing — scene list](./screenshot-landing.png)
 
-The entry page lists the demo scenes (智能座舱 / 智能家居 / 智能 IoT 充电桩) and the core capabilities: realtime voice, multi‑scene control, low‑latency interaction, and cloud‑native scaling.
+The entry page lists the demo scenes (Smart Cockpit / Smart Home / Smart IoT EV Charger) and the core capabilities: realtime voice, multi‑scene control, low‑latency interaction, and cloud‑native scaling.
 
 ### 2.2 Smart Home with the voice assistant connected (`/home`)
 
 ![AssistantX /home with the voice assistant panel connected and listening](./screenshot-home-voice.png)
 
-The Smart‑Home control console with the **语音助手 (Voice Assistant)** panel docked at the bottom‑right in the **已连接 / 正在聆听** ("connected / listening") state — a live LiveKit + Nova Sonic session. The mic is active, the transcript area is ready, and spoken commands ("打开客厅灯", "把空调调到 24 度") drive the lighting, A/C, and curtain cards on the page in realtime.
+The Smart‑Home control console with the **Voice Assistant** panel docked at the bottom‑right in the **Connected / Listening** state — a live LiveKit + Nova Sonic session. The mic is active, the transcript area is ready, and spoken commands ("turn on the living room light", "set the A/C to 24 degrees") drive the lighting, A/C, and curtain cards on the page in realtime.
 
 ---
 
