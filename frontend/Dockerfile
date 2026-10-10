@@ -1,5 +1,5 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM node:24-alpine AS build
+FROM public.ecr.aws/docker/library/node:24-alpine AS build
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN npm run build
 # nginx 1.29-alpine: the 1.27-alpine tag carried 3 critical + 35 high OS-package
 # CVEs (openssl, libxml2, libpng, musl, zlib); 1.29-alpine clears all criticals.
 # Pinned by digest for reproducibility — re-resolve when bumping the tag.
-FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS serve
+FROM public.ecr.aws/docker/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS serve
 
 # Pick up any Alpine security fixes published after the base tag was built.
 RUN apk upgrade --no-cache

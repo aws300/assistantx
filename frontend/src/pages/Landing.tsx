@@ -22,10 +22,13 @@ import { themeStore, themes, type ThemeColor } from '@/stores/theme';
 
 const themeOptions: ThemeColor[] = ['blue', 'pink', 'purple'];
 
+// In-app routes only: the scene cards link nowhere else.
+type ScenePath = '/car' | '/home' | '/charger';
+
 interface SceneConfig {
   title: string;
   description: string;
-  path: string;
+  path: ScenePath;
   gradient: string;
   updateTime: string;
 }

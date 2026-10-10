@@ -8,3 +8,7 @@ pyyaml>=6.0.3
 aiohttp==3.14.3
 boto3>=1.34.0
 litellm>=1.50.0
+# Transitive (livekit-agents / livekit-api, livekit-plugins-turn-detector):
+# floors below which known CVEs apply, so scanners and builds resolve the same.
+pyjwt>=2.15.1
+transformers>=5.10.0

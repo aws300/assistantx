@@ -24,6 +24,7 @@ Metadata:
           default: "EKS Configuration"
         Parameters:
           - EksVersion
+          - EksPublicAccessCidrs
       - Label:
           default: "EnvoyGateway"
         Parameters:
@@ -76,6 +77,10 @@ Parameters:
     Type: String
     Description: "EnvoyGateway release version"
     Default: "v1.7.0"
+  EksPublicAccessCidrs:
+    Type: CommaDelimitedList
+    Description: "IPv4 CIDRs allowed to reach the EKS public API endpoint (kubectl/helm from outside the VPC), e.g. your office egress /32. Default 0.0.0.0/0; access is still authenticated by IAM access entries."
+    Default: "0.0.0.0/0"
   AdminRoleArn:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
@@ -89,6 +94,11 @@ Parameters:
     Type: CommaDelimitedList
     Description: "Optional CNAMEs for the CloudFront distribution. Required when CloudFrontCertificateArn is set, and each must be covered by that certificate."
     Default: ""
+  CloudFrontWebAclArn:
+    Type: String
+    Description: "Optional ARN of an existing WAFv2 WebACL (Scope CLOUDFRONT, so created in us-east-1) to attach to the CloudFront distribution. In us-east-1 the stack creates its own WebACL when this is empty; in any other region CloudFront-scoped WebACLs cannot be created by the stack, so leave it empty to run without WAF or pass one created in us-east-1."
+    Default: ""
+    AllowedPattern: '^$|^arn:aws:wafv2:us-east-1:[0-9]{12}:global/webacl/.+'
   Tags:
     Type: String
     Description: 'JSON object of tags to apply to all resources (e.g. {"Environment":"prod","Team":"platform"})'
@@ -96,6 +106,11 @@ Parameters:
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
   HasCloudFrontCert: !Not [!Equals [!Ref CloudFrontCertificateArn, ""]]
+  HasExternalWebAcl: !Not [!Equals [!Ref CloudFrontWebAclArn, ""]]
+  # WAFv2 only accepts Scope CLOUDFRONT in us-east-1.
+  CreateCloudFrontWebAcl: !And
+    - !Equals [!Ref "AWS::Region", "us-east-1"]
+    - !Not [!Condition HasExternalWebAcl]
 
 # ==============================================================================
 # MAPPINGS
@@ -158,7 +173,8 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # EC2/EKS/Cognito/Lambda Describe actions do not support resource-level permissions
+              # These EC2 Describe*, Cognito domain, STS and Service Quotas reads do not
+              # support resource-level permissions.
               - Sid: ReadOnlyDescribeActions
                 Effect: Allow
                 Action:
@@ -169,12 +185,21 @@ Resources:
                   - ec2:DescribeNatGateways
                   - ec2:DescribeSubnets
                   - ec2:DescribeInstanceTypeOfferings
-                  - eks:DescribeCluster
-                  - lambda:GetFunction
                   - cognito-idp:DescribeUserPoolDomain
                   - sts:GetCallerIdentity
                   - servicequotas:GetServiceQuota
                 Resource: "*"
+              # Name-conflict checks only look at this stack's own cluster and functions.
+              - Sid: NameConflictChecks
+                Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                Resource: !Sub "arn:aws:eks:${AWS::Region}:${AWS::AccountId}:cluster/${ProjectName}${EnvironmentId}"
+              - Sid: LambdaNameConflictChecks
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
               - Sid: IamRoleRead
                 Effect: Allow
                 Action:
@@ -188,11 +213,42 @@ Resources:
                   - elasticfilesystem:DeleteMountTarget
                   - elasticfilesystem:DescribeMountTargets
                 Resource: !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/*"
+              # EFS creates and deletes a mount target's ENI with the caller's own
+              # credentials (forward access session), so the caller needs these EC2
+              # actions too — granted only when EFS makes the call.
+              - Sid: EfsMountTargetEni
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+                Condition:
+                  ForAnyValue:StringEquals:
+                    "aws:CalledVia": elasticfilesystem.amazonaws.com
+              # DescribeNetworkInterfaces does not support resource-level permissions.
+              - Sid: EfsMountTargetEniDescribe
+                Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+                Condition:
+                  ForAnyValue:StringEquals:
+                    "aws:CalledVia": elasticfilesystem.amazonaws.com
               - Sid: SqsDLQAccess
                 Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LambdaDLQ.Arn
+              # The DLQ is encrypted with SqsDlqKey; sending to it uses this role.
+              - Sid: SqsDLQKeyAccess
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: !GetAtt SqsDlqKey.Arn
 
   # KMS Key for SQS DLQ encryption
   SqsDlqKey:
@@ -211,14 +267,9 @@ Resources:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "kms:*"
             Resource: "*"
-          - Sid: Allow Lambda to use the key
-            Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action:
-              - "kms:Decrypt"
-              - "kms:GenerateDataKey"
-            Resource: "*"
+          # No service-principal statement: Lambda writes to the DLQ with each
+          # function's execution role, which is granted GenerateDataKey/Decrypt on
+          # this key explicitly (SqsDLQKeyAccess).
 
   SqsDlqKeyAlias:
     Type: AWS::KMS::Alias
@@ -246,7 +297,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "QuotaCheckFunction runs at stack creation to check AWS service quotas and does not need VPC access. Putting it in VPC without NAT would break API calls to AWS services."
+            comment: "QuotaCheck is the first resource of the stack and gates the VPC itself (VPC DependsOn QuotaCheck), so it cannot run inside that VPC; it only calls regional AWS APIs."
     Properties:
       Runtime: python3.12
       Handler: index.handler
@@ -945,29 +996,41 @@ Resources:
                   - cognito-idp:AdminCreateUser
                   - cognito-idp:AdminSetUserPassword
                   - cognito-idp:AdminAddUserToGroup
-                Resource: !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
-              - Sid: LogsAccess
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "arn:aws:logs:*:*:*"
+                # Only this stack's user pool (its triggers are attached later by
+                # CognitoUserPoolLambdaConfig, so the pool does not depend on this role).
+                Resource: !GetAtt CognitoUserPool.Arn
+              # CloudWatch Logs access comes from the AWSLambdaVPCAccessExecutionRole
+              # managed policy attached above; no separate statement is needed.
               - Sid: LambdaInvoke
                 Effect: Allow
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
-              - Sid: CloudFormationDescribe
+              - Sid: LiveKitSecretRead
                 Effect: Allow
                 Action:
-                  - cloudformation:DescribeStackEvents
-                Resource: "*"
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref LiveKitApiSecret
+              - Sid: LiveKitSecretDecrypt
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !GetAtt LambdaEnvKey.Arn
+                Condition:
+                  StringEquals:
+                    "kms:ViaService": !Sub "secretsmanager.${AWS::Region}.amazonaws.com"
               - Sid: SqsDLQAccess
                 Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LambdaDLQ.Arn
+              # The DLQ is encrypted with SqsDlqKey; sending to it uses this role.
+              - Sid: SqsDLQKeyAccess
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: !GetAtt SqsDlqKey.Arn
 
   # --- Test Pod IRSA Role (via Pod Identity) ---
   PodRole:
@@ -1013,17 +1076,10 @@ Resources:
                   - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
                   - !Sub "arn:aws:bedrock:*::foundation-model/*"
                   - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
-              - Sid: BedrockRealtimeStream
-                Effect: Allow
-                Action:
-                  - bedrock-runtime:InvokeModel
-                  - bedrock-runtime:InvokeModelWithResponseStream
-                  - bedrock-runtime:InvokeModelWithBidirectionalStream
-                  - bedrock-runtime:Converse
-                  - bedrock-runtime:ConverseStream
-                Resource:
-                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
-                  - !Sub "arn:aws:bedrock:*::foundation-model/*"
+              # No "bedrock-runtime:" statement: IAM has no such service prefix. The
+              # runtime APIs (Converse, ConverseStream and Nova Sonic's bidirectional
+              # stream) are authorized by bedrock:InvokeModel /
+              # bedrock:InvokeModelWithResponseStream, granted above.
               - Sid: BedrockAgentCoreMemory
                 Effect: Allow
                 Action:
@@ -1087,11 +1143,6 @@ Resources:
 
   EksCluster:
     Type: AWS::EKS::Cluster
-    Metadata:
-      checkov:
-        skip:
-          - id: CKV_AWS_58
-            comment: "EncryptionConfig cannot be changed on existing cluster without replacement. Adding to template for future deployments only - running cluster nxdev is unaffected."
     DependsOn:
       - PrivateSubnetARouteAssoc
       - PrivateSubnetBRouteAssoc
@@ -1127,10 +1178,11 @@ Resources:
           - !Ref PrivateSubnetA
           - !Ref PrivateSubnetB
           - !Ref PrivateSubnetC
+        # Public endpoint for operators' kubectl/helm; restrict it with
+        # EksPublicAccessCidrs. The stack's Lambdas use the private endpoint.
         EndpointPublicAccess: true
         EndpointPrivateAccess: true
-        PublicAccessCidrs:
-          - "0.0.0.0/0"
+        PublicAccessCidrs: !Ref EksPublicAccessCidrs
       EncryptionConfig:
         - Provider:
             KeyArn: !GetAtt EksSecretsKey.Arn
@@ -1195,6 +1247,9 @@ Resources:
       Encrypted: true
       PerformanceMode: generalPurpose
       ThroughputMode: bursting
+      # Daily backups to the AWS Backup default plan (35-day retention).
+      BackupPolicy:
+        Status: ENABLED
       FileSystemTags:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-efs"
@@ -1575,13 +1630,20 @@ Resources:
     Properties:
       GroupDescription: !Sub "${ProjectName}${EnvironmentId} kubectl lambda SG"
       VpcId: !Ref VPC
+      # HTTPS only: every call these functions make (EKS API, AWS APIs, get.helm.sh,
+      # GitHub releases, the chart registry, CloudFormation's response URL) is on
+      # 443. DNS to the VPC resolver is not filtered by security groups.
       SecurityGroupEgress:
-        - IpProtocol: "-1"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: "0.0.0.0/0"
-          Description: "Allow all outbound IPv4 traffic for Lambda to reach EKS API and AWS services"
-        - IpProtocol: "-1"
+          Description: "HTTPS (IPv4) to the EKS API endpoint, AWS service APIs and release downloads"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIpv6: "::/0"
-          Description: "Allow all outbound IPv6 traffic for Lambda to reach EKS API and AWS services"
+          Description: "HTTPS (IPv6) to the EKS API endpoint, AWS service APIs and release downloads"
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-kubectl-lambda-sg"
@@ -2028,10 +2090,10 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "Cognito PreTokenGeneration trigger must run with minimal latency during user authentication. Putting it in VPC without NAT can break auth flow and add significant latency. Lambda is invoked synchronously by Cognito during login."
+            comment: "Cognito PreTokenGeneration trigger runs synchronously on every login and reaches no VPC resource; a VPC attachment would only add cold-start latency and Hyperplane ENIs (which delay subnet deletion on stack teardown)."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-pre-token-gen"
-      Runtime: nodejs20.x
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 5
       MemorySize: 128
@@ -2077,7 +2139,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "CognitoLambdaConfigFunction needs to call public Cognito APIs during stack create/update. VPC attachment without NAT would break access to cognito-idp endpoints."
+            comment: "Only calls the regional Cognito API; it reaches no VPC resource, so a VPC attachment would add Hyperplane ENIs (which delay subnet deletion on stack teardown) without reducing exposure."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-lambda-config"
       Runtime: python3.12
@@ -2131,7 +2193,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "CognitoUserCreatorFunction needs to call public Cognito APIs during stack creation. VPC attachment without NAT would break access to cognito-idp endpoints."
+            comment: "Only calls the regional Cognito API; it reaches no VPC resource, so a VPC attachment would add Hyperplane ENIs (which delay subnet deletion on stack teardown) without reducing exposure."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-user-creator"
       Runtime: python3.12
@@ -2707,8 +2769,14 @@ Resources:
             - Header: X-Powered-By
 
   # S3 bucket for CloudFront access logs
+  # Retained when the stack is deleted: it is versioned and holds access logs,
+  # and CloudFormation cannot delete a non-empty bucket (stack deletion would
+  # end in DELETE_FAILED). It has no fixed name, so re-creating the stack
+  # never collides with a retained bucket.
   CloudFrontLogsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     DependsOn: QuotaCheck
     Metadata:
       checkov:
@@ -2716,7 +2784,8 @@ Resources:
           - id: CKV_AWS_18
             comment: "This is the logging bucket itself - it does not need access logging to avoid circular dependency"
     Properties:
-      BucketName: !Sub "${ProjectName}${EnvironmentId}-cf-logs-${AWS::AccountId}"
+      # No BucketName: S3 names must be lowercase and ProjectName is mixed case
+      # (e.g. AssistantX), so CloudFormation generates a unique lowercase name.
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -2753,10 +2822,23 @@ Resources:
             Condition:
               StringEquals:
                 "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt CloudFrontLogsBucket.Arn
+              - !Sub "${CloudFrontLogsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
 
   # WAF Web ACL for CloudFront
+  # CloudFront-scoped WebACLs can only be created in us-east-1, so other regions
+  # attach CloudFrontWebAclArn (or none) instead.
   CloudFrontWafAcl:
     Type: AWS::WAFv2::WebACL
+    Condition: CreateCloudFrontWebAcl
     DependsOn: QuotaCheck
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}-cf-waf"
@@ -2808,7 +2890,10 @@ Resources:
         HttpVersion: http2and3
         IPV6Enabled: true
         PriceClass: PriceClass_200
-        WebACLId: !GetAtt CloudFrontWafAcl.Arn
+        WebACLId: !If
+          - CreateCloudFrontWebAcl
+          - !GetAtt CloudFrontWafAcl.Arn
+          - !If [HasExternalWebAcl, !Ref CloudFrontWebAclArn, !Ref "AWS::NoValue"]
         Logging:
           Bucket: !GetAtt CloudFrontLogsBucket.DomainName
           Prefix: cloudfront-logs/
@@ -3100,6 +3185,11 @@ Resources:
               if ga_ips_key:
                 ips=[f"{ip}/32" for ip in props.get("GAIpv4s",[])]+[f"{ip}/128" for ip in props.get("GAIpv6s",[])]
                 cmd+=["--set",f"{ga_ips_key}={{{','.join(ips)}}}"]
+              lk_arn=props.get("LiveKitSecretArn")
+              if lk_arn:
+                lk=json.loads(sess.client("secretsmanager").get_secret_value(SecretId=lk_arn)["SecretString"])  # checkov:skip=CKV_SECRET_6: reads the generated LiveKit secret from Secrets Manager at deploy time, not a literal credential
+                cmd+=["--set-string",f"assistantx.config.livekit.apiKey={lk['apiKey']}",
+                      "--set-string",f"assistantx.config.livekit.apiSecret={lk['apiSecret']}"]
               # Add auth URI if cognito configured
               if pool_id and client_id and secret:
                 issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
@@ -3115,6 +3205,25 @@ Resources:
             except Exception as e:
               L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
 
+  # LiveKit API key/secret shared by the in-cluster LiveKit server, backend and
+  # agent. Generated once; stack updates keep it.
+  LiveKitApiSecret:
+    Type: AWS::SecretsManager::Secret
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV2_AWS_57
+            comment: "Rotating it would need the LiveKit server, backend and agent restarted together; it is internal to the cluster."
+    Properties:
+      Name: !Sub "${ProjectName}${EnvironmentId}-livekit-api"
+      Description: "LiveKit API key and secret for the AssistantX Helm release"
+      KmsKeyId: !Ref LambdaEnvKey
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"apiKey": "API${ProjectName}${EnvironmentId}"}'
+        GenerateStringKey: apiSecret
+        PasswordLength: 48
+        ExcludePunctuation: true
+
   HelmDeploy:
     Type: Custom::HelmDeploy
     DependsOn:
@@ -3127,10 +3236,14 @@ Resources:
       Region: !Ref "AWS::Region"
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
-      ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
-      ChartVersion: "0.2.1"
+      ChartRef: "oci://public.ecr.aws/r0l7m8u0/assistantx"
+      ChartVersion: "0.2.3"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
+      # The chart requires LiveKit API credentials; they are generated once in
+      # Secrets Manager and read by the function (dynamic references to secrets
+      # are not resolved inside custom resource properties).
+      LiveKitSecretArn: !Ref LiveKitApiSecret
       HelmSets:
         global.gatewayNamespace: envoy-gateway-system
         global.gateway: eg
@@ -3279,7 +3392,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "CognitoSecretFunction needs to call public Cognito APIs. VPC attachment without NAT would break access to cognito-idp endpoints."
+            comment: "Only calls the regional Cognito API; it reaches no VPC resource, so a VPC attachment would add Hyperplane ENIs (which delay subnet deletion on stack teardown) without reducing exposure."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-setup"
       Runtime: python3.12

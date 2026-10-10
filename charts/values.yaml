@@ -14,9 +14,9 @@ assistantx:
   # Secret of its own and config.auth / config.livekit.apiKey / apiSecret are unused.
   existingSecretName: ""
   image:
-    backend: ghcr.io/aws300/deploy:assistantx-backend
-    agent: ghcr.io/aws300/deploy:assistantx-agent
-    frontend: ghcr.io/aws300/deploy:assistantx-frontend
+    backend: 131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-backend
+    agent: 131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-agent
+    frontend: 131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-frontend
   host:
     frontend: assistantx.nx.run
     # backend: when set, backend RPCs are served on this hostname (separate domain).

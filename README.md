@@ -132,7 +132,7 @@ The chart is published to ECR Public and can be installed directly without cloni
 ```bash
 helm upgrade --install app \
   oci://public.ecr.aws/r0l7m8u0/assistantx \
-  --version 0.2.2 \
+  --version 0.2.3 \
   --namespace assistantx --create-namespace \
   ...values...
 ```
@@ -143,7 +143,7 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.2 \
+  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.3 \
   --namespace assistantx --create-namespace \
   --set global.gateway=eg \
   --set global.gatewayNamespace=envoy-gateway-system \
@@ -159,7 +159,7 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.2 \
+  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.3 \
   --namespace assistantx --create-namespace \
   \
   --set global.gateway=eg \
@@ -199,9 +199,9 @@ helm upgrade --install app charts/ \
 
 ```bash
 # Individual components
-./scripts/deploy.sh backend    # Go backend   (ghcr.io/aws300/deploy:assistantx-backend)
-./scripts/deploy.sh agent      # Python agent (ghcr.io/aws300/deploy:assistantx-agent)
-./scripts/deploy.sh frontend   # SolidJS frontend (ghcr.io/aws300/deploy:assistantx-frontend)
+./scripts/deploy.sh backend    # Go backend   (131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-backend)
+./scripts/deploy.sh agent      # Python agent (131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-agent)
+./scripts/deploy.sh frontend   # SolidJS frontend (131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-frontend)
 
 # All images + Helm chart + deploy
 ./scripts/deploy.sh all
@@ -215,14 +215,18 @@ helm upgrade --install app charts/ \
 
 ## Container Images
 
-Public, multi-arch (`linux/amd64` + `linux/arm64`):
+Multi-arch (`linux/amd64` + `linux/arm64`). The ECR repository `aws300/public` has a
+repository policy that lets **any AWS principal** pull (`ecr:BatchGetImage`,
+`ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability`). It is still a private
+ECR registry, so pulls are not anonymous: the caller needs AWS credentials and
+`ecr:GetAuthorizationToken` in its own account — EKS node roles already have both.
 
 | Image | Tag | Description |
 |---|---|---|
-| `ghcr.io/aws300/deploy` | `assistantx-backend` | Go / ConnectRPC backend |
-| `ghcr.io/aws300/deploy` | `assistantx-agent` | Python / LiveKit voice agent |
-| `ghcr.io/aws300/deploy` | `assistantx-frontend` | SolidJS SPA (nginx) |
-| `oci://public.ecr.aws/r0l7m8u0/assistantx` | `0.2.2` | Helm chart |
+| `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public` | `assistantx-backend` | Go / ConnectRPC backend |
+| `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public` | `assistantx-agent` | Python / LiveKit voice agent |
+| `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public` | `assistantx-frontend` | SolidJS SPA (nginx) |
+| `oci://public.ecr.aws/r0l7m8u0/assistantx` | `0.2.3` | Helm chart |
 
 ## Helm Values Reference
 
@@ -238,9 +242,9 @@ Public, multi-arch (`linux/amd64` + `linux/arm64`):
 
 | Key | Default | Description |
 |---|---|---|
-| `assistantx.image.backend` | `ghcr.io/aws300/deploy:assistantx-backend` | Go backend image |
-| `assistantx.image.agent` | `ghcr.io/aws300/deploy:assistantx-agent` | Python agent image |
-| `assistantx.image.frontend` | `ghcr.io/aws300/deploy:assistantx-frontend` | Frontend image |
+| `assistantx.image.backend` | `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-backend` | Go backend image |
+| `assistantx.image.agent` | `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-agent` | Python agent image |
+| `assistantx.image.frontend` | `131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public:assistantx-frontend` | Frontend image |
 
 ### Hostnames
 

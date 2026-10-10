@@ -33,21 +33,6 @@
       ]
     },
     {
-      "Sid": "BedrockRealtimeStream",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock-runtime:InvokeModel",
-        "bedrock-runtime:InvokeModelWithResponseStream",
-        "bedrock-runtime:InvokeModelWithBidirectionalStream",
-        "bedrock-runtime:Converse",
-        "bedrock-runtime:ConverseStream"
-      ],
-      "Resource": [
-        "arn:aws:bedrock:*:__ACCOUNT_ID__:inference-profile/*",
-        "arn:aws:bedrock:*::foundation-model/*"
-      ]
-    },
-    {
       "Sid": "BedrockAgentCoreMemory",
       "Effect": "Allow",
       "Action": [

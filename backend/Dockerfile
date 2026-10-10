@@ -1,11 +1,13 @@
-FROM golang:1.26-alpine AS builder
+# Go >= 1.26.9: earlier 1.26.x stdlib releases carry GO-2026-6603/6610/6611/6612/6617.
+# Base images come from the ECR Public mirror of the Docker official images.
+FROM public.ecr.aws/docker/library/golang:1.26.9-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -v -trimpath -ldflags '-s -w' -o /app/server ./cmd/server
 
-FROM alpine:3.21
+FROM public.ecr.aws/docker/library/alpine:3.21
 WORKDIR /app
 
 # Install wget for healthcheck

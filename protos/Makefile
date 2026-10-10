@@ -2,14 +2,18 @@ PROTO_DIR     := $(shell pwd)
 GO_OUT        := $(PROTO_DIR)/../backend/pkg/pb
 TS_OUT        := $(PROTO_DIR)/../frontend/src/gen
 PY_OUT        := $(PROTO_DIR)/../ai-agent/src/authspa/generated
+# Apache-2.0 header prepended to generated Go/TS files (same text as the
+# hand-written sources); the generators' own "Code generated" markers follow it.
+LICENSE_HEADER := $(PROTO_DIR)/license-header.txt
 
-.PHONY: all gen gen-python clean clean-python
+.PHONY: all gen gen-python clean clean-python license-headers
 
 all: gen
 
 gen: clean
 	@echo "Generating protobuf files (Go + TypeScript)..."
 	buf generate
+	@$(MAKE) --no-print-directory license-headers
 	@echo "Done."
 	@echo "  Go -> $(GO_OUT)"
 	@echo "  TS -> $(TS_OUT)"
@@ -35,6 +39,14 @@ gen-python: clean-python
 	find $(PY_OUT) -type d -exec touch {}/__init__.py \;
 	@echo "Done."
 	@echo "  Python -> $(PY_OUT)"
+
+license-headers:
+	@for f in $$(find $(GO_OUT) $(TS_OUT) -type f \( -name "*.pb.go" -o -name "*.connect.go" -o -name "*_pb.ts" \)); do \
+		if ! head -5 "$$f" | grep -q "Licensed under the Apache License"; then \
+			{ cat $(LICENSE_HEADER); echo; cat "$$f"; } > "$$f.tmp" && mv "$$f.tmp" "$$f"; \
+		fi; \
+	done
+	@echo "License headers checked."
 
 clean:
 	@echo "Cleaning generated files..."

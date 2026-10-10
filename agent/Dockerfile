@@ -2,7 +2,7 @@
 # Build command:  cd agent && docker build -t <image> .
 
 # ── Stage 1: install Python dependencies + application ───────────────────────
-FROM python:3.13-slim AS builder
+FROM public.ecr.aws/docker/library/python:3.13-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ \
@@ -38,7 +38,7 @@ RUN pip install --no-cache-dir .
 # util-linux, ncurses) currently have NO fixed version published by Debian —
 # `apt-get upgrade` below already pulls everything that is actually available.
 # Re-check on base-image bumps; nothing in the app calls into these packages.
-FROM python:3.13-slim
+FROM public.ecr.aws/docker/library/python:3.13-slim
 
 # Runtime needs only the GLib stack the LiveKit/audio plugins link against and
 # procps for the healthcheck's pgrep. The interactive debug tools that used to be

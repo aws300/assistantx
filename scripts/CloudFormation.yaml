@@ -24,6 +24,7 @@ Metadata:
           default: "EKS Configuration"
         Parameters:
           - EksVersion
+          - EksPublicAccessCidrs
       - Label:
           default: "EnvoyGateway"
         Parameters:
@@ -70,6 +71,10 @@ Parameters:
     Type: String
     Description: "EnvoyGateway release version"
     Default: "v1.7.0"
+  EksPublicAccessCidrs:
+    Type: CommaDelimitedList
+    Description: "IPv4 CIDRs allowed to reach the EKS public API endpoint (kubectl/helm from outside the VPC), e.g. your office egress /32. Default 0.0.0.0/0; access is still authenticated by IAM access entries."
+    Default: "0.0.0.0/0"
   AdminRoleArn:
     Type: String
     Description: "IAM Role ARN for EKS console admin access (e.g. arn:aws:iam::123456789012:role/admin)"
@@ -158,7 +163,8 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # EC2/EKS/Cognito/Lambda Describe actions do not support resource-level permissions
+              # These EC2 Describe*, Cognito domain, STS and Service Quotas reads do not
+              # support resource-level permissions.
               - Sid: ReadOnlyDescribeActions
                 Effect: Allow
                 Action:
@@ -169,12 +175,21 @@ Resources:
                   - ec2:DescribeNatGateways
                   - ec2:DescribeSubnets
                   - ec2:DescribeInstanceTypeOfferings
-                  - eks:DescribeCluster
-                  - lambda:GetFunction
                   - cognito-idp:DescribeUserPoolDomain
                   - sts:GetCallerIdentity
                   - servicequotas:GetServiceQuota
                 Resource: "*"
+              # Name-conflict checks only look at this stack's own cluster and functions.
+              - Sid: NameConflictChecks
+                Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                Resource: !Sub "arn:aws:eks:${AWS::Region}:${AWS::AccountId}:cluster/${ProjectName}${EnvironmentId}"
+              - Sid: LambdaNameConflictChecks
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
               - Sid: IamRoleRead
                 Effect: Allow
                 Action:
@@ -196,6 +211,17 @@ Resources:
                 Action:
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+                Condition:
+                  ForAnyValue:StringEquals:
+                    "aws:CalledVia": elasticfilesystem.amazonaws.com
+              # DescribeNetworkInterfaces does not support resource-level permissions.
+              - Sid: EfsMountTargetEniDescribe
+                Effect: Allow
+                Action:
                   - ec2:DescribeNetworkInterfaces
                 Resource: "*"
                 Condition:
@@ -231,14 +257,9 @@ Resources:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "kms:*"
             Resource: "*"
-          - Sid: Allow Lambda to use the key
-            Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action:
-              - "kms:Decrypt"
-              - "kms:GenerateDataKey"
-            Resource: "*"
+          # No service-principal statement: Lambda writes to the DLQ with each
+          # function's execution role, which is granted GenerateDataKey/Decrypt on
+          # this key explicitly (SqsDLQKeyAccess).
 
   SqsDlqKeyAlias:
     Type: AWS::KMS::Alias
@@ -266,7 +287,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "QuotaCheckFunction runs at stack creation to check AWS service quotas and does not need VPC access. Putting it in VPC without NAT would break API calls to AWS services."
+            comment: "QuotaCheck is the first resource of the stack and gates the VPC itself (VPC DependsOn QuotaCheck), so it cannot run inside that VPC; it only calls regional AWS APIs."
     Properties:
       Runtime: python3.12
       Handler: index.handler
@@ -899,24 +920,15 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:AdminCreateUser
                   - cognito-idp:AdminSetUserPassword
-                Resource: !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
-              - Sid: LogsAccess
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "arn:aws:logs:*:*:*"
+                # Only this stack's user pool (the pool does not depend on this role).
+                Resource: !GetAtt CognitoUserPool.Arn
+              # CloudWatch Logs access comes from the AWSLambdaVPCAccessExecutionRole
+              # managed policy attached above; no separate statement is needed.
               - Sid: LambdaInvoke
                 Effect: Allow
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}${EnvironmentId}-*"
-              - Sid: CloudFormationDescribe
-                Effect: Allow
-                Action:
-                  - cloudformation:DescribeStackEvents
-                Resource: "*"
               - Sid: LiveKitSecretRead
                 Effect: Allow
                 Action:
@@ -987,17 +999,10 @@ Resources:
                   - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
                   - !Sub "arn:aws:bedrock:*::foundation-model/*"
                   - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
-              - Sid: BedrockRealtimeStream
-                Effect: Allow
-                Action:
-                  - bedrock-runtime:InvokeModel
-                  - bedrock-runtime:InvokeModelWithResponseStream
-                  - bedrock-runtime:InvokeModelWithBidirectionalStream
-                  - bedrock-runtime:Converse
-                  - bedrock-runtime:ConverseStream
-                Resource:
-                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
-                  - !Sub "arn:aws:bedrock:*::foundation-model/*"
+              # No "bedrock-runtime:" statement: IAM has no such service prefix. The
+              # runtime APIs (Converse, ConverseStream and Nova Sonic's bidirectional
+              # stream) are authorized by bedrock:InvokeModel /
+              # bedrock:InvokeModelWithResponseStream, granted above.
               - Sid: BedrockAgentCoreMemory
                 Effect: Allow
                 Action:
@@ -1072,11 +1077,6 @@ Resources:
       - NatGatewayB
       - NatGatewayC
       - S3Endpoint
-    Metadata:
-      checkov:
-        skip:
-          - id: CKV_AWS_58
-            comment: "EncryptionConfig cannot be changed on existing cluster without replacement. Adding to template for future deployments only - running cluster nxdev is unaffected."
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}"
       Version: !Ref EksVersion
@@ -1101,10 +1101,11 @@ Resources:
           - !Ref PrivateSubnetA
           - !Ref PrivateSubnetB
           - !Ref PrivateSubnetC
+        # Public endpoint for operators' kubectl/helm; restrict it with
+        # EksPublicAccessCidrs. The stack's Lambdas use the private endpoint.
         EndpointPublicAccess: true
         EndpointPrivateAccess: true
-        PublicAccessCidrs:
-          - "0.0.0.0/0"
+        PublicAccessCidrs: !Ref EksPublicAccessCidrs
       EncryptionConfig:
         - Provider:
             KeyArn: !GetAtt EksSecretsKey.Arn
@@ -1169,6 +1170,9 @@ Resources:
       Encrypted: true
       PerformanceMode: generalPurpose
       ThroughputMode: bursting
+      # Daily backups to the AWS Backup default plan (35-day retention).
+      BackupPolicy:
+        Status: ENABLED
       FileSystemTags:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-efs"
@@ -1292,13 +1296,20 @@ Resources:
     Properties:
       GroupDescription: !Sub "${ProjectName}${EnvironmentId} kubectl lambda SG"
       VpcId: !Ref VPC
+      # HTTPS only: every call these functions make (EKS API, AWS APIs, get.helm.sh,
+      # GitHub releases, the chart registry, CloudFormation's response URL) is on
+      # 443. DNS to the VPC resolver is not filtered by security groups.
       SecurityGroupEgress:
-        - IpProtocol: "-1"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: "0.0.0.0/0"
-          Description: "Allow all outbound IPv4 traffic for Lambda to reach EKS API and AWS services"
-        - IpProtocol: "-1"
+          Description: "HTTPS (IPv4) to the EKS API endpoint, AWS service APIs and release downloads"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIpv6: "::/0"
-          Description: "Allow all outbound IPv6 traffic for Lambda to reach EKS API and AWS services"
+          Description: "HTTPS (IPv6) to the EKS API endpoint, AWS service APIs and release downloads"
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}${EnvironmentId}-kubectl-lambda-sg"
@@ -1717,7 +1728,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "CognitoUserCreatorFunction needs to call public Cognito APIs during stack creation. VPC attachment without NAT would break access to cognito-idp endpoints."
+            comment: "Only calls the regional Cognito API; it reaches no VPC resource, so a VPC attachment would add Hyperplane ENIs (which delay subnet deletion on stack teardown) without reducing exposure."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-user-creator"
       Runtime: python3.12
@@ -2524,8 +2535,14 @@ Resources:
             - Header: X-Powered-By
 
   # S3 bucket for CloudFront access logs
+  # Retained when the stack is deleted: it is versioned and holds access logs,
+  # and CloudFormation cannot delete a non-empty bucket (stack deletion would
+  # end in DELETE_FAILED). It has no fixed name, so re-creating the stack
+  # never collides with a retained bucket.
   CloudFrontLogsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     DependsOn: QuotaCheck
     Metadata:
       checkov:
@@ -2571,6 +2588,16 @@ Resources:
             Condition:
               StringEquals:
                 "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt CloudFrontLogsBucket.Arn
+              - !Sub "${CloudFrontLogsBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
 
   # WAF Web ACL for CloudFront. CloudFront-scoped WebACLs can only be created in
   # us-east-1, so other regions attach CloudFrontWebAclArn (or none) instead.
@@ -2975,7 +3002,7 @@ Resources:
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
       ChartRef: "oci://public.ecr.aws/r0l7m8u0/assistantx"
-      ChartVersion: "0.2.2"
+      ChartVersion: "0.2.3"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
       # The chart requires LiveKit API credentials; they are generated once in
@@ -3132,7 +3159,7 @@ Resources:
       checkov:
         skip:
           - id: CKV_AWS_117
-            comment: "CognitoSecretFunction needs to call public Cognito APIs. VPC attachment without NAT would break access to cognito-idp endpoints."
+            comment: "Only calls the regional Cognito API; it reaches no VPC resource, so a VPC attachment would add Hyperplane ENIs (which delay subnet deletion on stack teardown) without reducing exposure."
     Properties:
       FunctionName: !Sub "${ProjectName}${EnvironmentId}-cognito-setup"
       Runtime: python3.12

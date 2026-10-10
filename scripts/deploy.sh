@@ -38,10 +38,11 @@ set -euo pipefail
 # pushing requires that the alias belong to the authenticated AWS account.
 ECR_PUBLIC_REGISTRY="${ECR_PUBLIC_REGISTRY:-public.ecr.aws/r0l7m8u0}"
 
-# Container images: public GHCR package, one tag per component
-# (ghcr.io/aws300/deploy:assistantx-backend / -agent / -frontend), built for
-# both architectures so any EKS node type can run them.
-IMAGE_REPO="${IMAGE_REPO:-ghcr.io/aws300/deploy}"
+# Container images: ECR repository aws300/public (its repository policy lets any
+# AWS principal pull), one tag per component (…:assistantx-backend / -agent /
+# -frontend), built for both architectures so any EKS node type can run them.
+# A ghcr.io/... IMAGE_REPO is also supported.
+IMAGE_REPO="${IMAGE_REPO:-131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public}"
 IMAGE_PLATFORMS="${IMAGE_PLATFORMS:-linux/amd64,linux/arm64}"
 # buildx builder able to build IMAGE_PLATFORMS (empty = the current builder)
 BUILDX_BUILDER="${BUILDX_BUILDER:-}"
@@ -102,8 +103,17 @@ verify_aws() {
 
 image_ref() { echo "${IMAGE_REPO}:assistantx-$1"; }
 
-ghcr_login() {
-    [[ "$IMAGE_REPO" == ghcr.io/* ]] || return 0
+# image_login: log Docker into whichever registry IMAGE_REPO points at.
+image_login() {
+    local registry="${IMAGE_REPO%%/*}"
+    if [[ "$registry" =~ ^[0-9]{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com$ ]]; then
+        aws ecr get-login-password --region "${BASH_REMATCH[1]}" \
+            | docker login --username AWS --password-stdin "$registry" >/dev/null \
+            || fail "ECR login to $registry failed"
+        info "ECR login OK ($registry)"
+        return 0
+    fi
+    [[ "$registry" == ghcr.io ]] || { warn "unknown registry $registry; relying on an existing docker login"; return 0; }
     if command -v gh &>/dev/null && gh auth token &>/dev/null; then
         gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin >/dev/null \
             || fail "GHCR login failed"
@@ -166,7 +176,7 @@ restart_deployments() {
 # ============================================================
 build_backend() {
     log "========== backend (Go): proto → build → push → restart =========="
-    ghcr_login
+    image_login
 
     log "[1/3] Generating protobuf..."
     command -v buf &>/dev/null || fail "buf not installed"
@@ -182,7 +192,7 @@ build_backend() {
 
 build_agent() {
     log "========== agent (Python): build → push → helm deploy =========="
-    ghcr_login
+    image_login
 
     log "[1/3] Building and pushing agent image..."
     build_push agent
@@ -211,7 +221,7 @@ build_agent() {
 
 build_frontend() {
     log "========== frontend: build → push → restart =========="
-    ghcr_login
+    image_login
 
     log "[1/2] Building and pushing frontend image..."
     build_push frontend
@@ -223,7 +233,7 @@ build_frontend() {
 
 build_docker() {
     log "========== Building all images =========="
-    ghcr_login
+    image_login
 
     log "[1/3] Generating protobuf..."
     command -v buf &>/dev/null || fail "buf not installed"
@@ -441,7 +451,7 @@ show_help() {
     echo "  HELM_NAMESPACE            default: scaffolding"
     echo "  HELM_VALUES_FILE          default: (none, uses charts/values.yaml)"
     echo "  EKS_CLUSTER_NAME          required for: create-irsa-role"
-    echo "  IMAGE_REPO                default: ghcr.io/aws300/deploy (tags assistantx-<component>)"
+    echo "  IMAGE_REPO                default: 131166810173.dkr.ecr.us-west-2.amazonaws.com/aws300/public (tags assistantx-<component>)"
     echo "  IMAGE_PLATFORMS           default: linux/amd64,linux/arm64"
     echo "  BUILDX_BUILDER            buildx builder for IMAGE_PLATFORMS (default: current)"
 }
