@@ -49,7 +49,77 @@ assistantx/
     └── deploy.sh    # build → push → helm upgrade
 ```
 
+## One-Click AWS Deployment (CloudFormation)
+
+[`scripts/CloudFormation.yaml`](scripts/CloudFormation.yaml) creates the whole environment in one
+stack: VPC (IPv4 + IPv6), EKS Auto Mode, Envoy Gateway, EFS, Cognito (OIDC), CloudFront,
+Global Accelerator and the AssistantX Helm release — no existing cluster needed.
+
+**Download:** [CloudFormation.yaml](https://raw.githubusercontent.com/aws300/assistantx/main/scripts/CloudFormation.yaml)
+
+```bash
+curl -fLO https://raw.githubusercontent.com/aws300/assistantx/main/scripts/CloudFormation.yaml
+```
+
+### Deploy
+
+The template is larger than the 51 KB inline limit, so it goes through S3. With the AWS CLI
+(`--s3-bucket` is any bucket you own in the target region):
+
+```bash
+aws cloudformation deploy \
+  --region us-east-2 \
+  --stack-name assistantx \
+  --template-file CloudFormation.yaml \
+  --s3-bucket <your-bucket-in-us-east-2> \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides ProjectName=AssistantX EnvironmentId=001
+```
+
+Or in the console: **CloudFormation → Create stack → Upload a template file**, choose
+`CloudFormation.yaml`, and acknowledge the IAM capability on the last page.
+
+Creation takes about 30–40 minutes. To follow it (status and new events every 5 minutes,
+printing the outputs on success or the failing resources on failure):
+
+```bash
+./scripts/cfn-monitor.sh --stack assistantx --region us-east-2
+```
+
+### Parameters
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `ProjectName` / `EnvironmentId` | `AssistantX` / `001` | Prefix of every resource name; use a different `EnvironmentId` for a second stack in the same account |
+| `VpcCidr` | `10.80.0.0/16` | VPC IPv4 range |
+| `EksVersion` | `1.35` | `1.33`, `1.34` or `1.35` |
+| `EnvoyGatewayVersion` | `v1.7.0` | Envoy Gateway release |
+| `AdminRoleArn` | — | Optional IAM role granted EKS cluster-admin (for console / kubectl access) |
+| `CloudFrontCertificateArn` / `CloudFrontAliases` | — | Optional us-east-1 ACM certificate and matching CNAMEs for a custom domain |
+| `CloudFrontWebAclArn` | — | Optional WAFv2 WebACL (scope `CLOUDFRONT`, created in us-east-1). In us-east-1 the stack creates its own when empty; in other regions leave it empty to run without WAF |
+
+### After deployment
+
+The stack **Outputs** have everything needed to use it:
+
+| Output | Use |
+|---|---|
+| `CloudFrontDomain` | Open `https://<CloudFrontDomain>` — the AssistantX web app |
+| `CognitoAdminUsername` / `CognitoAdminPassword` | First login (change the password afterwards) |
+| `GlobalAcceleratorHost` | Backend API + LiveKit endpoint |
+| `EksClusterName` | `aws eks update-kubeconfig --region us-east-2 --name <EksClusterName>` |
+
+The release runs in namespace `assistantx-<EnvironmentId>`. Bedrock is reached through the
+stack's `PodRole`; set your own knowledge base with
+`helm upgrade … --reuse-values --set assistantx.config.livekit.knowledgeBase.id=<KB_ID>`.
+
+To remove everything: `aws cloudformation delete-stack --region us-east-2 --stack-name assistantx`
+(run `cfn-monitor.sh` alongside it — it clears detached Lambda network interfaces that would
+otherwise hold the VPC subnets for a long time).
+
 ## Prerequisites
+
+For installing the Helm chart on an existing cluster:
 
 - Kubernetes cluster with [Envoy Gateway](https://gateway.envoyproxy.io/) installed
 - A `Gateway` resource already provisioned with listeners on ports 443, 7883, 7881
@@ -61,8 +131,8 @@ The chart is published to ECR Public and can be installed directly without cloni
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/b1y9i2f3/assistantx \
-  --version 0.2.0 \
+  oci://public.ecr.aws/r0l7m8u0/assistantx \
+  --version 0.2.2 \
   --namespace assistantx --create-namespace \
   ...values...
 ```
@@ -73,7 +143,7 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.2.0 \
+  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.2 \
   --namespace assistantx --create-namespace \
   --set global.gateway=eg \
   --set global.gatewayNamespace=envoy-gateway-system \
@@ -89,7 +159,7 @@ helm upgrade --install app \
 
 ```bash
 helm upgrade --install app \
-  oci://public.ecr.aws/b1y9i2f3/assistantx --version 0.2.0 \
+  oci://public.ecr.aws/r0l7m8u0/assistantx --version 0.2.2 \
   --namespace assistantx --create-namespace \
   \
   --set global.gateway=eg \
@@ -129,9 +199,9 @@ helm upgrade --install app charts/ \
 
 ```bash
 # Individual components
-./scripts/deploy.sh backend    # Go backend (:backend)
-./scripts/deploy.sh agent      # Python agent (:agent)
-./scripts/deploy.sh frontend   # SolidJS frontend (:frontend)
+./scripts/deploy.sh backend    # Go backend   (ghcr.io/aws300/deploy:assistantx-backend)
+./scripts/deploy.sh agent      # Python agent (ghcr.io/aws300/deploy:assistantx-agent)
+./scripts/deploy.sh frontend   # SolidJS frontend (ghcr.io/aws300/deploy:assistantx-frontend)
 
 # All images + Helm chart + deploy
 ./scripts/deploy.sh all
@@ -145,12 +215,14 @@ helm upgrade --install app charts/ \
 
 ## Container Images
 
+Public, multi-arch (`linux/amd64` + `linux/arm64`):
+
 | Image | Tag | Description |
 |---|---|---|
-| `public.ecr.aws/b1y9i2f3/assistantx` | `backend` | Go / ConnectRPC backend |
-| `public.ecr.aws/b1y9i2f3/assistantx` | `agent` | Python / LiveKit voice agent |
-| `public.ecr.aws/b1y9i2f3/assistantx` | `frontend` | SolidJS SPA (nginx) |
-| `oci://public.ecr.aws/b1y9i2f3/assistantx` | `0.1.0` | Helm chart |
+| `ghcr.io/aws300/deploy` | `assistantx-backend` | Go / ConnectRPC backend |
+| `ghcr.io/aws300/deploy` | `assistantx-agent` | Python / LiveKit voice agent |
+| `ghcr.io/aws300/deploy` | `assistantx-frontend` | SolidJS SPA (nginx) |
+| `oci://public.ecr.aws/r0l7m8u0/assistantx` | `0.2.2` | Helm chart |
 
 ## Helm Values Reference
 
@@ -166,9 +238,9 @@ helm upgrade --install app charts/ \
 
 | Key | Default | Description |
 |---|---|---|
-| `assistantx.image.backend` | `…:backend` | Go backend image |
-| `assistantx.image.agent` | `…:agent` | Python agent image |
-| `assistantx.image.frontend` | `…:frontend` | Frontend image |
+| `assistantx.image.backend` | `ghcr.io/aws300/deploy:assistantx-backend` | Go backend image |
+| `assistantx.image.agent` | `ghcr.io/aws300/deploy:assistantx-agent` | Python agent image |
+| `assistantx.image.frontend` | `ghcr.io/aws300/deploy:assistantx-frontend` | Frontend image |
 
 ### Hostnames
 
