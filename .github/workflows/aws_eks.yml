@@ -1,43 +1,63 @@
 name: Deploy Helm to EKS
 
+# Upgrades the existing AssistantX release on the EKS cluster from charts/.
+# The release's credentials (OIDC DSN, LiveKit key/secret) were supplied at
+# install time and are not in git, so the upgrade reuses the release's values
+# (--reset-then-reuse-values keeps them while picking up new chart defaults
+# such as image tags). Install the release once with scripts/deploy.sh first.
+#
+# Variables of the "production" environment (Settings → Environments →
+# production): AWS_ACCOUNT_ID, AWS_REGION, EKS_CLUSTER; optional
+# AWS_ROLE_NAME (default nxdev-GithubActions), HELM_RELEASE (default app),
+# HELM_NAMESPACE (default assistantx).
+
 on:
   push:
     branches:
       - main
     tags:
       - v*
-
-env:
-  # Set the repository variable AWS_ACCOUNT_ID (Settings → Secrets and variables → Actions → Variables).
-  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-  AWS_REGION: us-west-2
-  EKS_CLUSTER: xorbit
+  workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: deploy-eks
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
     environment: production
+    env:
+      HELM_RELEASE: ${{ vars.HELM_RELEASE || 'app' }}
+      HELM_NAMESPACE: ${{ vars.HELM_NAMESPACE || 'assistantx' }}
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-      with:
-        role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GithubActionsRole
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME || 'nxdev-GithubActions' }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-    - name: Deploy Helm to Amazon EKS
-      uses: bitovi/github-actions-deploy-eks-helm@29f556cf128eb1b42f834caf13b60a630ee2a20b # v1.2.12
-      with:
-        aws-region: ${{ env.AWS_REGION }}
-        cluster-name: ${{ env.EKS_CLUSTER }}
-        chart-path: charts/
-        namespace: scaffolding
-        name: app
+      - name: Configure kubectl
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER: ${{ vars.EKS_CLUSTER }}
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER"
+
+      - name: Helm upgrade
+        run: |
+          helm status "$HELM_RELEASE" -n "$HELM_NAMESPACE" >/dev/null \
+            || { echo "::error::Release $HELM_RELEASE not found in $HELM_NAMESPACE — install it once with scripts/deploy.sh"; exit 1; }
+          helm upgrade "$HELM_RELEASE" charts/ \
+            --namespace "$HELM_NAMESPACE" \
+            --reset-then-reuse-values \
+            --wait --timeout 10m
+          kubectl -n "$HELM_NAMESPACE" get pods
