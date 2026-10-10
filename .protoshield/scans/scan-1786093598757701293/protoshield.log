@@ -1,7 +1,0 @@
-=== ProtoShield Scan Started: 2026-08-07 17:06:38 UTC ===
-INFO: Successfully built container image protoshield:597e7811
-INFO: Cleaning up old base container images protoshield 597e7811
-INFO: Building project-specific container protoshield:597e7811-assistantx
-INFO: Successfully built project-specific container protoshield:597e7811-assistantx
-INFO: Cleaning up project-specific container image protoshield:597e7811-assistantx
-INFO: Successfully removed project-specific container image protoshield:597e7811-assistantx
