@@ -2,5 +2,5 @@ apiVersion: v2
 name: assistantx
 description: A Helm chart for assistantx — standalone OIDC/OAuth SPA with AI agent
 type: application
-version: 0.2.1
+version: 0.2.2
 appVersion: "2.1.0"

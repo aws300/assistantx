@@ -33,11 +33,18 @@ set -euo pipefail
 # ============================================================
 # Config
 # ============================================================
-# ECR public registry (images + Helm chart).
+# ECR public registry (Helm chart).
 # Override with ECR_PUBLIC_REGISTRY to publish under a different registry alias;
 # pushing requires that the alias belong to the authenticated AWS account.
 ECR_PUBLIC_REGISTRY="${ECR_PUBLIC_REGISTRY:-public.ecr.aws/r0l7m8u0}"
-ECR_PUBLIC_IMAGE="${ECR_PUBLIC_REGISTRY}/assistantx"
+
+# Container images: public GHCR package, one tag per component
+# (ghcr.io/aws300/deploy:assistantx-backend / -agent / -frontend), built for
+# both architectures so any EKS node type can run them.
+IMAGE_REPO="${IMAGE_REPO:-ghcr.io/aws300/deploy}"
+IMAGE_PLATFORMS="${IMAGE_PLATFORMS:-linux/amd64,linux/arm64}"
+# buildx builder able to build IMAGE_PLATFORMS (empty = the current builder)
+BUILDX_BUILDER="${BUILDX_BUILDER:-}"
 
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-app}"
 HELM_NAMESPACE="${HELM_NAMESPACE:-assistantx}"
@@ -93,6 +100,31 @@ verify_aws() {
     info "AWS ARN:     $arn"
 }
 
+image_ref() { echo "${IMAGE_REPO}:assistantx-$1"; }
+
+ghcr_login() {
+    [[ "$IMAGE_REPO" == ghcr.io/* ]] || return 0
+    if command -v gh &>/dev/null && gh auth token &>/dev/null; then
+        gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin >/dev/null \
+            || fail "GHCR login failed"
+        info "GHCR login OK"
+    else
+        warn "gh CLI not logged in; relying on an existing 'docker login ghcr.io'"
+    fi
+}
+
+# build_push <component>: multi-arch build of ./<component> pushed to image_ref
+build_push() {
+    local component="$1" image
+    image="$(image_ref "$component")"
+    docker buildx build ${BUILDX_BUILDER:+--builder "$BUILDX_BUILDER"} \
+        --platform "$IMAGE_PLATFORMS" \
+        --label org.opencontainers.image.source=https://github.com/aws300/assistantx \
+        -t "$image" --push "$SCRIPT_DIR/$component" \
+        || fail "$component build/push failed"
+    info "Pushed: $image ($IMAGE_PLATFORMS)"
+}
+
 ecr_public_login() {
     log "Logging into ECR public: $ECR_PUBLIC_REGISTRY ..."
     # ECR public login must use us-east-1
@@ -134,17 +166,14 @@ restart_deployments() {
 # ============================================================
 build_backend() {
     log "========== backend (Go): proto → build → push → restart =========="
-    ecr_public_login
+    ghcr_login
 
     log "[1/3] Generating protobuf..."
     command -v buf &>/dev/null || fail "buf not installed"
     make -C "$SCRIPT_DIR/protos"
 
     log "[2/3] Building and pushing backend image..."
-    local image="${ECR_PUBLIC_IMAGE}:backend"
-    docker build -t "$image" "$SCRIPT_DIR/backend" || fail "backend build failed"
-    docker push "$image"                            || fail "backend push failed"
-    info "Backend image pushed: $image"
+    build_push backend
 
     log "[3/3] Restarting backend..."
     restart_deployment "assistantx-backend"
@@ -153,16 +182,12 @@ build_backend() {
 
 build_agent() {
     log "========== agent (Python): build → push → helm deploy =========="
-    ecr_public_login
+    ghcr_login
 
     log "[1/3] Building and pushing agent image..."
-    local image="${ECR_PUBLIC_IMAGE}:agent"
-    docker build \
-        -t "$image" \
-        "$SCRIPT_DIR/agent" \
-        || fail "agent build failed"
-    docker push "$image" || fail "agent push failed"
-    info "Agent image pushed: $image"
+    build_push agent
+    local image
+    image="$(image_ref agent)"
 
     log "[2/3] Deploying Helm chart with agent image..."
     local values_args=()
@@ -186,13 +211,10 @@ build_agent() {
 
 build_frontend() {
     log "========== frontend: build → push → restart =========="
-    ecr_public_login
+    ghcr_login
 
     log "[1/2] Building and pushing frontend image..."
-    local image="${ECR_PUBLIC_IMAGE}:frontend"
-    docker build -t "$image" "$SCRIPT_DIR/frontend" || fail "frontend build failed"
-    docker push "$image"                             || fail "frontend push failed"
-    info "Frontend image pushed: $image"
+    build_push frontend
 
     log "[2/2] Restarting frontend..."
     restart_deployment "assistantx-frontend"
@@ -201,7 +223,7 @@ build_frontend() {
 
 build_docker() {
     log "========== Building all images =========="
-    ecr_public_login
+    ghcr_login
 
     log "[1/3] Generating protobuf..."
     command -v buf &>/dev/null || fail "buf not installed"
@@ -215,21 +237,9 @@ build_docker() {
     info "Backend compile OK"
 
     log "[3/3] Building and pushing images..."
-    local backend_image="${ECR_PUBLIC_IMAGE}:backend"
-    local agent_image="${ECR_PUBLIC_IMAGE}:agent"
-    local frontend_image="${ECR_PUBLIC_IMAGE}:frontend"
-
-    docker build -t "$backend_image"  "$SCRIPT_DIR/backend"  || fail "backend build failed"
-    docker push "$backend_image"                              || fail "backend push failed"
-    info "Pushed: $backend_image"
-
-    docker build -t "$agent_image"    "$SCRIPT_DIR/agent"    || fail "agent build failed"
-    docker push "$agent_image"                                || fail "agent push failed"
-    info "Pushed: $agent_image"
-
-    docker build -t "$frontend_image" "$SCRIPT_DIR/frontend" || fail "frontend build failed"
-    docker push "$frontend_image"                             || fail "frontend push failed"
-    info "Pushed: $frontend_image"
+    build_push backend
+    build_push agent
+    build_push frontend
 
     log "========== All images built and pushed =========="
 }
@@ -410,11 +420,11 @@ show_help() {
     echo "Commands:"
     echo "  (default)              Deploy Helm chart to EKS (no build)"
     echo "  helm                   Deploy Helm chart to EKS"
-    echo "  backend                Build, push Go backend image (:backend) and restart"
-    echo "  agent                  Build, push Python agent image (:agent) and deploy"
-    echo "  frontend               Build, push frontend image (:frontend) and restart"
+    echo "  backend                Build, push Go backend image (\$IMAGE_REPO:assistantx-backend) and restart"
+    echo "  agent                  Build, push Python agent image (\$IMAGE_REPO:assistantx-agent) and deploy"
+    echo "  frontend               Build, push frontend image (\$IMAGE_REPO:assistantx-frontend) and restart"
     echo "  docker                 Build and push all images (backend + agent + frontend)"
-    echo "  chart                  Package and push Helm chart to oci://public.ecr.aws/b1y9i2f3"
+    echo "  chart                  Package and push Helm chart to oci://\$ECR_PUBLIC_REGISTRY"
     echo "  all                    Build all images + push chart + deploy"
     echo "  create-irsa-role NAME  Create IAM role NAME with minimum IRSA permissions"
     echo "                         (reads policy template from scripts/irsa-policy.json)"
@@ -431,6 +441,9 @@ show_help() {
     echo "  HELM_NAMESPACE            default: scaffolding"
     echo "  HELM_VALUES_FILE          default: (none, uses charts/values.yaml)"
     echo "  EKS_CLUSTER_NAME          required for: create-irsa-role"
+    echo "  IMAGE_REPO                default: ghcr.io/aws300/deploy (tags assistantx-<component>)"
+    echo "  IMAGE_PLATFORMS           default: linux/amd64,linux/arm64"
+    echo "  BUILDX_BUILDER            buildx builder for IMAGE_PLATFORMS (default: current)"
 }
 
 # ============================================================

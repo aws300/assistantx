@@ -83,9 +83,19 @@ Parameters:
     Type: CommaDelimitedList
     Description: "Optional CNAMEs for the CloudFront distribution. Required when CloudFrontCertificateArn is set, and each must be covered by that certificate."
     Default: ""
+  CloudFrontWebAclArn:
+    Type: String
+    Description: "Optional ARN of an existing WAFv2 WebACL (Scope CLOUDFRONT, so created in us-east-1) to attach to the CloudFront distribution. In us-east-1 the stack creates its own WebACL when this is empty; in any other region CloudFront-scoped WebACLs cannot be created by the stack, so leave it empty to run without WAF or pass one created in us-east-1."
+    Default: ""
+    AllowedPattern: '^$|^arn:aws:wafv2:us-east-1:[0-9]{12}:global/webacl/.+'
 Conditions:
   HasAdminRole: !Not [!Equals [!Ref AdminRoleArn, ""]]
   HasCloudFrontCert: !Not [!Equals [!Ref CloudFrontCertificateArn, ""]]
+  HasExternalWebAcl: !Not [!Equals [!Ref CloudFrontWebAclArn, ""]]
+  # WAFv2 only accepts Scope CLOUDFRONT in us-east-1.
+  CreateCloudFrontWebAcl: !And
+    - !Equals [!Ref "AWS::Region", "us-east-1"]
+    - !Not [!Condition HasExternalWebAcl]
 
 # ==============================================================================
 # MAPPINGS
@@ -178,11 +188,31 @@ Resources:
                   - elasticfilesystem:DeleteMountTarget
                   - elasticfilesystem:DescribeMountTargets
                 Resource: !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/*"
+              # EFS creates and deletes a mount target's ENI with the caller's own
+              # credentials (forward access session), so the caller needs these EC2
+              # actions too — granted only when EFS makes the call.
+              - Sid: EfsMountTargetEni
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+                Condition:
+                  ForAnyValue:StringEquals:
+                    "aws:CalledVia": elasticfilesystem.amazonaws.com
               - Sid: SqsDLQAccess
                 Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LambdaDLQ.Arn
+              # The DLQ is encrypted with SqsDlqKey; sending to it uses this role.
+              - Sid: SqsDLQKeyAccess
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: !GetAtt SqsDlqKey.Arn
 
   # KMS Key for SQS DLQ encryption
   SqsDlqKey:
@@ -887,11 +917,31 @@ Resources:
                 Action:
                   - cloudformation:DescribeStackEvents
                 Resource: "*"
+              - Sid: LiveKitSecretRead
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref LiveKitApiSecret
+              - Sid: LiveKitSecretDecrypt
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !GetAtt LambdaEnvKey.Arn
+                Condition:
+                  StringEquals:
+                    "kms:ViaService": !Sub "secretsmanager.${AWS::Region}.amazonaws.com"
               - Sid: SqsDLQAccess
                 Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LambdaDLQ.Arn
+              # The DLQ is encrypted with SqsDlqKey; sending to it uses this role.
+              - Sid: SqsDLQKeyAccess
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                Resource: !GetAtt SqsDlqKey.Arn
 
   # --- Test Pod IRSA Role (via Pod Identity) ---
   PodRole:
@@ -2483,7 +2533,8 @@ Resources:
           - id: CKV_AWS_18
             comment: "This is the logging bucket itself - it does not need access logging to avoid circular dependency"
     Properties:
-      BucketName: !Sub "${ProjectName}${EnvironmentId}-cf-logs-${AWS::AccountId}"
+      # No BucketName: S3 names must be lowercase and ProjectName is mixed case
+      # (e.g. AssistantX), so CloudFormation generates a unique lowercase name.
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -2521,9 +2572,11 @@ Resources:
               StringEquals:
                 "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
 
-  # WAF Web ACL for CloudFront
+  # WAF Web ACL for CloudFront. CloudFront-scoped WebACLs can only be created in
+  # us-east-1, so other regions attach CloudFrontWebAclArn (or none) instead.
   CloudFrontWafAcl:
     Type: AWS::WAFv2::WebACL
+    Condition: CreateCloudFrontWebAcl
     DependsOn: QuotaCheck
     Properties:
       Name: !Sub "${ProjectName}${EnvironmentId}-cf-waf"
@@ -2575,7 +2628,10 @@ Resources:
         HttpVersion: http2and3
         IPV6Enabled: true
         PriceClass: PriceClass_200
-        WebACLId: !GetAtt CloudFrontWafAcl.Arn
+        WebACLId: !If
+          - CreateCloudFrontWebAcl
+          - !GetAtt CloudFrontWafAcl.Arn
+          - !If [HasExternalWebAcl, !Ref CloudFrontWebAclArn, !Ref "AWS::NoValue"]
         Logging:
           Bucket: !GetAtt CloudFrontLogsBucket.DomainName
           Prefix: cloudfront-logs/
@@ -2867,6 +2923,11 @@ Resources:
               if ga_ips_key:
                 ips=[f"{ip}/32" for ip in props.get("GAIpv4s",[])]+[f"{ip}/128" for ip in props.get("GAIpv6s",[])]
                 cmd+=["--set",f"{ga_ips_key}={{{','.join(ips)}}}"]
+              lk_arn=props.get("LiveKitSecretArn")
+              if lk_arn:
+                lk=json.loads(sess.client("secretsmanager").get_secret_value(SecretId=lk_arn)["SecretString"])  # checkov:skip=CKV_SECRET_6: reads the generated LiveKit secret from Secrets Manager at deploy time, not a literal credential
+                cmd+=["--set-string",f"assistantx.config.livekit.apiKey={lk['apiKey']}",
+                      "--set-string",f"assistantx.config.livekit.apiSecret={lk['apiSecret']}"]
               # Add auth URI if cognito configured
               if pool_id and client_id and secret:
                 issuer_host=f"cognito-idp.{region}.amazonaws.com/{pool_id}"
@@ -2882,6 +2943,25 @@ Resources:
             except Exception as e:
               L.exception("fail");send_cfn(event,ctx,"FAILED",reason=str(e)[:256])
 
+  # LiveKit API key/secret shared by the in-cluster LiveKit server, backend and
+  # agent. Generated once; stack updates keep it.
+  LiveKitApiSecret:
+    Type: AWS::SecretsManager::Secret
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV2_AWS_57
+            comment: "Rotating it would need the LiveKit server, backend and agent restarted together; it is internal to the cluster."
+    Properties:
+      Name: !Sub "${ProjectName}${EnvironmentId}-livekit-api"
+      Description: "LiveKit API key and secret for the AssistantX Helm release"
+      KmsKeyId: !Ref LambdaEnvKey
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"apiKey": "API${ProjectName}${EnvironmentId}"}'
+        GenerateStringKey: apiSecret
+        PasswordLength: 48
+        ExcludePunctuation: true
+
   HelmDeploy:
     Type: Custom::HelmDeploy
     DependsOn:
@@ -2894,10 +2974,14 @@ Resources:
       Region: !Ref "AWS::Region"
       Namespace: !Sub "assistantx-${EnvironmentId}"
       ReleaseName: !Sub "assistantx-${EnvironmentId}"
-      ChartRef: "oci://public.ecr.aws/b1y9i2f3/assistantx"
-      ChartVersion: "0.2.0"
+      ChartRef: "oci://public.ecr.aws/r0l7m8u0/assistantx"
+      ChartVersion: "0.2.2"
       UserPoolId: !Ref CognitoUserPool
       ClientId: !Ref CognitoUserPoolClient
+      # The chart requires LiveKit API credentials; they are generated once in
+      # Secrets Manager and read by the function (dynamic references to secrets
+      # are not resolved inside custom resource properties).
+      LiveKitSecretArn: !Ref LiveKitApiSecret
       HelmSets:
         global.gatewayNamespace: envoy-gateway-system
         global.gateway: eg

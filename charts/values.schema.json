@@ -42,16 +42,16 @@
             "backend": {
               "type": "string",
               "minLength": 1,
-              "description": "Go backend image, e.g. public.ecr.aws/b1y9i2f3/assistantx:backend"
+              "description": "Go backend image, e.g. ghcr.io/aws300/deploy:assistantx-backend"
             },
             "agent": {
               "type": "string",
-              "description": "Python LiveKit agent image, e.g. public.ecr.aws/b1y9i2f3/assistantx:agent"
+              "description": "Python LiveKit agent image, e.g. ghcr.io/aws300/deploy:assistantx-agent"
             },
             "frontend": {
               "type": "string",
               "minLength": 1,
-              "description": "SolidJS frontend image, e.g. public.ecr.aws/b1y9i2f3/assistantx:frontend"
+              "description": "SolidJS frontend image, e.g. ghcr.io/aws300/deploy:assistantx-frontend"
             }
           }
         },
